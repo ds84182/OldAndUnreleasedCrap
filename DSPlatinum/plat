@@ -1,0 +1,113 @@
+loadfile("webframe")()
+loadfile("stream")()
+loadfile("parseurl")()
+rednet.open("right")
+local web = webframe.new(51,18,1,2)
+term.setBackgroundColor(colors.white)
+term.setTextColor(colors.purple)
+term.clear()
+term.setCursorPos(1,1)
+print("Looking for a DNS server...")
+local dns = {}
+rednet.broadcast("DNSPING")
+while true do
+	local id, msg = rednet.receive(1/2)
+	if msg == "DNS" then
+		dns = id
+		print("DNS: "..id)
+		break
+	end
+end
+print("I haz dns")
+local addr = "www.website.com"
+local cache = {}
+function dnsget(webs)
+	rednet.send(dns,"DNSGET "..webs)
+	while true do
+		local id, msg = rednet.receive(60)
+		if id == nil then
+			term.setBackgroundColor(colors.white)
+			term.setTextColor(colors.purple)
+			term.clear()
+			term.setCursorPos(1,1)
+			print("Connection Timed Out")
+			sleep(1/2)
+		elseif id == dns then
+			return tonumber(msg)
+		end
+	end
+end
+function loadSite(a)
+	local p = parse(a)
+	local f = p.authority
+	print(f)
+	if cache[f] == nil then
+		cache[f] = dnsget(f)
+	end
+	rednet.send(cache[f],"80|GET "..p.path)
+	local cont = ""
+	term.setBackgroundColor(colors.lightGray)
+	term.clearLine()
+	term.setCursorPos(1,2)
+	term.write("Loading Page...")
+	local w, h = term.getSize()
+	IRednetStream(cache[f],function(data,pid,pt)
+		cont=cont..data
+		local per = pid/pt
+		term.setCursorPos(2,h-1)
+		term.setBackgroundColor(colors.white)
+		term.clearLine()
+		term.setBackgroundColor(colors.lightBlue)
+		write(string.rep(" ",math.floor(per*w-2)))
+	end)
+	sleep(1/20)
+	web.load(cont)
+end
+function download(a)
+	local p = parse(a)
+	local f = p.authority
+	if cache[f] == nil then
+		cache[f] = dnsget(f)
+	end
+	rednet.send(cache[f],"80|GET "..p.path)
+	local fname = p.path
+	local cont = ""
+	term.setBackgroundColor(colors.lightGray)
+	term.clearLine()
+	term.setCursorPos(1,2)
+	term.write("Downloading File "..fname)
+	local w, h = term.getSize()
+	IRednetStream(cache[f],function(data,pid,pt)
+		cont=cont..data
+		local per = pid/pt
+		term.setCursorPos(2,h-1)
+		term.setBackgroundColor(colors.white)
+		term.clearLine()
+		term.setBackgroundColor(colors.lightBlue)
+		write(string.rep(" ",math.floor(math.abs(per*(w-2)))))
+	end)
+	sleep(1/20)
+	local pp = parse_path(p.path)
+	local fh = fs.open("download/"..pp[#pp],"w")
+	fh.write(cont)
+	fh.close()
+end
+web.setLinkHandler(function(ref,dl)
+	if not dl then
+		local p = parse("ccweb://"..ref)
+		if not p.authority then
+			loadSite("ccweb://"..addr.."/"..ref)
+		else
+			loadSite("ccweb://"..ref)
+		end
+	else
+		local p = parse("ccweb://"..ref)
+		if not p.authority then
+			download("ccweb://"..addr.."/"..ref)
+		else
+			download("ccweb://"..ref)
+		end
+	end
+end)
+loadSite("ccweb://"..addr.."/index.wmrk")
+while true do web.loop() end

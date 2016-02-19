@@ -1,0 +1,22 @@
+local sFile = ""
+local sSize = math.huge
+local lFile = ""
+local lSize = -1
+function recFCheck(path)
+  for i,v in pairs(fs.list(path)) do
+    if not fs.isDir(path.."/"..v) then
+      if fs.getSize(path.."/"..v) < sSize then
+        sSize = fs.getSize(path.."/"..v)
+        sFile = path.."/"..v
+      elseif fs.getSize(path.."/"..v) > lSize then
+        lSize = fs.getSize(path.."/"..v)
+        lFile = path.."/"..v
+      end
+    else
+      recFCheck(path.."/"..v)
+    end
+  end
+end
+recFCheck("")
+print("Smallest File: "..sFile.." "..sSize)
+print("Largest File: "..lFile.." "..lSize)

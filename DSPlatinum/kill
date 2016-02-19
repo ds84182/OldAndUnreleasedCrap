@@ -1,0 +1,6 @@
+oldPull = os.pullEventRaw
+os.pullEventRaw = function( ... )
+  event, p1, p2, p3, p4 = oldPull( ... )
+  os.queueEvent(event, p1, p2, p3, p4)
+  return event, p1, p2, p3, p4
+end

@@ -1,0 +1,234 @@
+webframe = {}
+local webmeta = {}
+local function split(str, pat)
+	local t = {}	-- NOTE: use {n = 0} in Lua-5.0
+	local fpat = "(.-)" .. pat
+	local last_end = 1
+	local s, e, cap = str:find(fpat, 1)
+	while s do
+		if s ~= 1 or cap ~= "" then
+	table.insert(t,cap)
+		end
+		last_end = e+1
+		s, e, cap = str:find(fpat, last_end)
+	end
+	if last_end <= #str then
+		cap = str:sub(last_end)
+		table.insert(t, cap)
+	end
+	return t
+end
+local function parseargs(s)
+  local arg = {}
+  string.gsub(s, "(%w+)=([\"'])(.-)%2", function (w, _, a)
+    arg[w] = a
+  end)
+  return arg
+end
+    
+local function collect(s)
+  local stack = {}
+  local top = {}
+  table.insert(stack, top)
+  local ni,c,label,xarg, empty
+  local i, j = 1, 1
+  while true do
+    ni,j,c,label,xarg, empty = string.find(s, "<(%/?)([%w:]+)(.-)(%/?)>", i)
+    if not ni then break end
+    local text = string.sub(s, i, ni-1)
+    if not string.find(text, "^%s*$") then
+      table.insert(top, text)
+    end
+    if empty == "/" then  -- empty element tag
+      table.insert(top, {label=label, xarg=parseargs(xarg), empty=1})
+    elseif c == "" then   -- start tag
+      top = {label=label, xarg=parseargs(xarg)}
+      table.insert(stack, top)   -- new level
+    else  -- end tag
+      local toclose = table.remove(stack)  -- remove top
+      top = stack[#stack]
+      if #stack < 1 then
+        error("nothing to close with "..label)
+      end
+      if toclose.label ~= label then
+        error("trying to close "..toclose.label.." with "..label)
+      end
+      table.insert(top, toclose)
+    end
+    i = j+1
+  end
+  local text = string.sub(s, i)
+  if not string.find(text, "^%s*$") then
+    table.insert(stack[#stack], text)
+  end
+  if #stack > 1 then
+    error("unclosed "..stack[#stack].label)
+  end
+  return stack[1]
+end
+function webframe.new(w,h,px,py)
+	local xml
+	local title = "New Tab"
+	local link = {}
+	local linksel = 1
+	local text = {}
+	local lines = 0
+	local scroll = 0
+	local markup
+	local ret = {}
+	local code = {}
+	local fl = true
+	local linkhand = function(ref) error("No link handler installed!") end
+	function ret.setLinkHandler(func)
+		linkhand = func
+	end
+	function ret.load(cont)
+		local filstr = ""
+		local fil = cont
+		xml = collect(fil)
+		markup = xml[1]
+		if markup == nil or markup.label ~= "mark" then
+			xml = collect("<mark><title>!Parse Error!</title><text>XML Empty or Mark tag missing</text></mark>")
+			markup = xml[1]
+		end
+		title = ""
+		text = {}
+		link = {}
+		linksel = 1
+		for i, v in pairs(markup) do
+			if type(v) == "table" then
+				if v.label == "title" then
+					title = v[1]
+				elseif v.label == "text" then
+					table.insert(text,{split(v[1]," "),link=false,nl=v.xarg.nl or true})
+				elseif v.label == "link" then
+					if #v[1] > w-2 then
+						v[1] = v[1]:sub(1,w-2)
+					end
+					table.insert(text,{split(v[1]," "),linkat=#link+1,link=true,ref=v.xarg.ref,nl=v.xarg.nl or false,dl=v.xarg.dl or false})
+					table.insert(link,#text)
+				elseif v.label == "lua" then
+					local f = loadstring(v[1])
+					local env = loadfile("safewebenv")()
+					env.print = function(...)
+						for i, v in pairs({...}) do
+							table.insert(text,{split(tostring(v)," "),link=false,nl=true})
+						end
+					end
+					setfenv(f,env)
+					table.insert(code,coroutine.create(f))
+				end
+			end
+		end
+		lines = 0
+		scroll = 0
+	end
+	function ret.render()
+		term.setBackgroundColor(colors.white)
+		term.clear()
+		term.setCursorPos(px,1-scroll+py)
+		lines = 0
+		for i, v in pairs(text) do
+			if not v.link then
+				term.setTextColor(colors.black)
+				for _, t in pairs(v[1]) do
+					local x, y = term.getCursorPos()
+					if x+#t+1 > w then
+						lines = lines+1
+						y = y+1
+						x=px
+					end
+					if y <= h+py and y >= py then
+						term.setCursorPos(x,y)
+						term.write(t)
+						term.setCursorPos(x+#t+1,y)
+					end
+				end
+				if v.nl then
+					local x, y = term.getCursorPos()
+					term.setCursorPos(px,y+1)
+					lines = lines+1
+				end
+			else
+				local x, y = term.getCursorPos()
+				if x+#table.concat(v[1]," ")+1 > w then
+					lines = lines+1
+					y = y+1
+					x=px
+				end
+				term.setCursorPos(x,y)
+				if y <= h+py and y >= py then
+					if linksel == v.linkat then
+						term.setTextColor(colors.black)
+						term.write("[")
+						term.setTextColor(colors.purple)
+						term.write(table.concat(v[1]," "))
+						term.setTextColor(colors.black)
+						term.write("]")
+					else
+						term.setTextColor(colors.black)
+						term.write("(")
+						term.setTextColor(colors.blue)
+						term.write(table.concat(v[1]," "))
+						term.setTextColor(colors.black)
+						term.write(")")
+					end
+				end
+				if v.nl then
+					lines = lines+1
+					local x, y = term.getCursorPos()
+					term.setCursorPos(px,y+1)
+				end
+			end
+		end
+		lines = lines+1
+		term.setCursorPos(px,py)
+		term.setBackgroundColor(colors.lightGray)
+		term.clearLine()
+		term.setTextColor(colors.black)
+		term.write(title)
+	end
+	function ret.loop()
+		if fl then
+			os.startTimer(1/2)
+			fl = not fl
+		end
+		ret.render()
+		local args = {os.pullEvent()}
+		for i,v in pairs(code) do
+			if coroutine.status(v) == "suspended" then
+				coroutine.resume(v,unpack(args))
+			end
+		end
+		local e, k = args[1], args[2]
+		if e == "key" then
+			if k == keys.down then
+				if lines/(h-1) > 1 then
+					if scroll <= lines-h then
+						scroll = scroll+1
+					end
+				end
+			elseif k == keys.up then
+				if lines/(h-1) > 1 then
+					if scroll ~= 0 then
+						scroll = scroll-1
+					end
+				end
+			elseif k == keys.left then
+				if linksel ~= 1 then
+					linksel = linksel-1
+				end
+			elseif k == keys.right then
+				if linksel ~= #link then
+					linksel = linksel+1
+				end
+			elseif k == keys.enter then
+				if link[linksel] ~=  nil then
+					linkhand(text[link[linksel]].ref,text[link[linksel]].dl)
+				end
+			end
+		end
+	end
+	return ret
+end
+			
