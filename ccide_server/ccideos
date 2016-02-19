@@ -1,0 +1,191 @@
+--This is an OS that opens in the background--
+--It is a overhaul to CraftOS--
+local tArgs = {...}
+function start()
+	--The GUI will not be colored, because this is mainly made to run on turtles.--
+	term.clear()
+	function kill()
+		--Kills the current process using PEB--
+		local oldpullEventRaw = os.pullEventRaw
+		function os.pullEventRaw()
+			os.pullEventRaw = oldpullEventRaw
+			error()
+		end
+	end
+	function getCallingFile(offset)
+		local offset = offset or 0
+		--What this will do is find out where it is being called at--
+		local _, e = pcall(function() error("lol"..math.random(),4+offset) end)
+		return e:match("([^:]+):")
+	end
+	function killProcess(fname)
+		local oldpullEventRaw = os.pullEventRaw
+		function os.pullEventRaw(...)
+			if getCallingFile(2) == fname then
+				os.pullEventRaw = oldpullEventRaw
+				print("Killing "..fname)
+				error()
+			else
+				return oldpullEventRaw(...)
+			end
+		end
+	end
+	function hookProcess(fname,func)
+		local oldpullEventRaw = os.pullEventRaw
+		function os.pullEventRaw(...)
+			if getCallingFile(2) == fname then
+				os.pullEventRaw = oldpullEventRaw
+				func()
+			else
+				return oldpullEventRaw(...)
+			end
+		end
+	end
+	local function hookEventHandling()
+		local eventList = {}
+		function runEvent(...)
+			local ev = {...}
+			local args = {unpack(ev)}
+			table.remove(args,1)
+			for i, v in pairs(eventList[ev[1]] or {}) do
+				v(unpack(args))
+			end
+			return unpack(ev)
+		end
+		function hookEvent(e,f)
+			eventList[e] = eventList[e] or {}
+			table.insert(eventList[e],f)
+		end
+	end
+	function yesNo(text)
+		term.setBackgroundColor(colors.white)
+		term.setTextColor(colors.black)
+		local w,h = term.getSize()
+		local forth = math.floor(h/4)
+		for x = 1, w do
+			for y = 1, math.floor(h/2) do
+				term.setCursorPos(x,y+forth)
+				term.write(" ")
+			end
+		end
+		term.setCursorPos(2,forth+2)
+		write(text)
+		local c = false
+		while true do
+			term.setCursorPos(2,forth+5)
+			term.write((c and ">" or " ").."yes")
+			term.setCursorPos(2,forth+6)
+			term.write((not c and ">" or " ").."no")
+			local e,k = os.pullEvent("key")
+			if k == keys.down or k == keys.up then
+				c = not c
+			elseif k == keys.enter then
+				return c
+			end
+		end
+	end
+	hookEventHandling()
+	local HotCode = {isConnected = false, connectedTo = -1, env = {},patches = {}}
+	local function rednetHook(id,msg)
+		if msg == "HotCode:Connect" and not HotCode.isConnected then
+			--Make a message come up on the screen--
+			local c = yesNo("ID: "..id.." wants to use HotCode on this machine.")
+			term.setCursorPos(1,1)
+			if c then
+				rednet.send(id,"HotCode:Accept")
+				HotCode.isConnected = true
+				HotCode.connectedTo = id
+				setmetatable(HotCode.env,{__index=getfenv()})
+			end
+			term.setBackgroundColor(colors.black)
+			term.setTextColor(colors.white)
+			term.clear()
+		elseif HotCode.isConnected and HotCode.connectedTo == id then
+			if msg:find("HotCode:InitalRunCode") then
+				local code = msg:match("HotCode:InitalRunCode:(.+)")
+				local fh = fs.open("locals","r")
+				HotCode.initalcode = fh.readAll().."\n"..code
+				fh.close()
+				local fh = fs.open("out","w")
+				fh.write(HotCode.initalcode)
+				fh.close()
+			elseif msg:find("HotCode:UpdateCode") then
+				print(msg)
+				local funcname, funcpar, funcbody = msg:match("HotCode:UpdateCode:([^;]+);([^;]+);(.+)")
+				print("Updating "..funcname)
+				print(HotCode.env.Loops)
+				--table.insert(HotCode.patches,funcname.."=function () "..funcbody.." end")
+				local f,e = loadstring(funcname.."=function("..funcpar..") "..funcbody.." end")
+				if not f then
+					error(e)
+				end
+				setfenv(f,HotCode.env)
+				local at = HotCode.env
+				--[[for t in funcname:gmatch("([^%.]+)") do
+					if type(at[t]) == 'table' then
+						at = at[t]
+					elseif type(at[t]) == 'function' then
+						at[t] = f
+						print("Successfully replaced function")
+					end
+				end]]
+				f()
+			elseif msg:find("HotCode:Disconnect") then
+				os.reboot()
+				os.pullEvent()
+			end
+		end
+	end
+	local nterm = {}
+	local oldterm = term.native
+	for i, v in pairs(oldterm) do
+		nterm[i] = function(...)
+			if HotCode.isConnected then
+				local m = "HotCode:Term:"..i..":"
+				m = m..textutils.serialize({...})
+				rednet.send(HotCode.connectedTo,m)
+			end
+			return v(...)
+		end
+	end
+	term.redirect(nterm)
+	rednet.open("right")
+	hookEvent("rednet_message",rednetHook)
+	parallel.waitForAny(function()
+		local coro
+		while true do
+			if HotCode.initalcode then
+				local f = loadstring(HotCode.initalcode,"hotcode")
+				setfenv(f,HotCode.env)
+				coro = coroutine.create(f)
+				break
+			end
+			sleep(0)
+		end
+		local lastEvent = {}
+		while true do
+			--print("resume")
+			local ok,nextEvent = coroutine.resume(coro,unpack(lastEvent))
+			if not ok or coroutine.status(coro) == "dead" then
+				printError(nextEvent)
+				sleep(300)
+				rednet.send(HotCode.connectedTo,"HotCode:Disconnect")
+				sleep(0)
+				os.reboot()
+			end
+			--print(nextEvent)
+			lastEvent = {coroutine.yield(nextEvent)}
+		end
+	end,function()
+		while true do
+			runEvent(coroutine.yield())
+		end
+	end)
+end
+--Load the term.write bootstrap--
+local oldgetsize = term.write
+term.write = function()
+	term.write = oldgetsize
+	start()
+	term.setCursorPos(1,1)
+end

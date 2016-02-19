@@ -1,0 +1,247 @@
+dofile("ccidehotcode")
+--rednet.open("right")
+--connect(1)
+
+--Start of IDE--
+local lines = {[[print("Hello, World!")]]}
+local openFiles = {{"Untitled",lines}}
+
+local status = "Press Ctrl to access menu"
+state = "editor"
+local screen
+os.loadAPI("softwareterm")
+local clear = true
+local exploreMode = "O"
+local menu = {}
+menu.d = {"Deploy",function()
+	hotcode(table.concat(lines,"\n"))
+end,function() return Hotcode.isConnected end}
+menu.f = {"Disconnect",function()
+	disconnect()
+end,function() return Hotcode.isConnected end}
+menu.v = {"View Screen",function()
+	state = "screen"
+	clear = false
+end,function() return Hotcode.isConnected end}
+menu.c = {"Connect",function()
+	rednet.open("right")
+	connect(1)
+end,function() return not Hotcode.isConnected end}
+menu.x = {"Exit",function()
+	if Hotcode.isConnected then
+		disconnect()
+	end
+	error()
+end}
+menu.o = {"Open",function()
+	exploreMode = "O"
+	local f = loadfile("explorer")()
+	local fh = fs.open(f,"r")
+	local l = {}
+	while true do
+		local line = fh.readLine()
+		if line then
+			table.insert(l,line)
+		else
+			break
+		end
+	end
+	fh.close()
+	table.insert(openFiles,{f,l})
+	lines = l
+end}
+menu.r = {"Reload ccidehotcode",function()
+	if Hotcode.isConnected then
+		disconnect()
+	end
+	dofile("ccidehotcode")
+end}
+
+local sx,sy = 0, 0
+local w,h = term.getSize()
+local bx, by = 0, 0
+local cx, cy = 1, 1
+
+local draw = {}
+
+function draw.menu()
+	term.setBackgroundColor(colors.gray)
+	term.setCursorBlink(false)
+	term.setTextColor(colors.white)
+	for x=2, w/2 do
+		for y=1, h do
+			term.setCursorPos(x,y)
+			term.write(" ")
+		end
+	end
+	local n = 1
+	for i, v in pairs(menu) do
+		local show = true
+		if v[3] then
+			show = v[3]()
+		end
+		if show then
+			term.setCursorPos(3,n)
+			term.write(v[1].." ("..i..")")
+			n = n+1
+		end
+	end
+end
+
+function draw.screen()
+	--term.setCursorBlink(false)
+	screen.draw(0,0)
+end
+
+function redraw()
+	if clear then
+		term.setCursorBlink(false)
+		term.setBackgroundColor(colors.black)
+		term.setTextColor(colors.white)
+		term.clear()
+		term.setCursorPos(1,h)
+		term.write(status)
+		for y = 1+sy, (h-2)+sy do
+			bx = math.max(#(lines[y] or ""),bx)
+			by = #lines
+		end
+		cx = math.min(cx,#(lines[cy] or "")+1)
+		cx = cx<1 and 1 or cx
+		cy = math.min(cy,by)
+		cy = cy<1 and 1 or cy
+		if cx>=(sx+(w-1)) then
+			sx = sx+(cx-(sx+(w-1)))
+		elseif cx<=sx then
+			sx = cx-1
+		end
+		if cy>=(sy+(h-2)) then
+			sy = sy+(cy-(sy+(h-2)))
+		elseif cy<=sy then
+			sy = cy-1
+		end
+		for y = 1+sy, (h-2)+sy do
+			term.setCursorPos(1-sx,y-sy)
+			term.write(lines[y] or "")
+		end
+		--Draw scrollbars
+		do
+			local ammt = (w-1)/bx
+			term.setCursorPos(1+((sx/bx)*(w-1)),h-1)
+			term.setBackgroundColor(colors.gray)
+			term.write(string.rep(" ",ammt*(w-1)))
+			--term.setCursorPos(1,h-1)
+			--term.write(ammt.." = "..(w-1).."/"..bx)
+			local ammt = (h-2)/by
+			term.setCursorPos(w,1)
+			term.setBackgroundColor(colors.gray)
+			for i = 1, math.min(ammt*(h-2),h-2) do
+				term.setCursorPos(w,i+((sy/by)*(h-2)))
+				term.write(" ")
+			end
+		end
+		term.setCursorBlink(true)
+		term.setCursorPos(cx-sx, cy-sy)
+	end
+	if draw[state] then
+		draw[state]()
+	end
+end
+
+local on = {}
+
+function on.key(k)
+	if state == "editor" then
+		if k == keys.right then
+			cx = cx+1
+		elseif k == keys.left then
+			cx = cx-1
+		elseif k == keys.down then
+			cy = cy+1
+		elseif k == keys.up then
+			cy = cy-1
+		elseif k == keys.leftCtrl then
+			state = "menu"
+		elseif k == keys.backspace then
+			if cx-2 >= 0 then
+				local b = lines[cy]:sub(1,cx-2)
+				local a = lines[cy]:sub(cx)
+				lines[cy] = b..a
+				cx = cx-1
+			elseif cy ~= 1 then
+				cx = #lines[cy-1]+1
+				lines[cy-1] = lines[cy-1]..lines[cy]
+				table.remove(lines,cy)
+				cy = cy-1
+			end
+		elseif k == keys.enter then
+			local b = lines[cy]:sub(1,cx-1)
+			local a = lines[cy]:sub(cx)
+			lines[cy] = b
+			cy = cy+1
+			table.insert(lines,cy,a)
+			cx = 1
+		end
+	elseif state == "menu" then
+		if k == keys.leftCtrl then
+			state = "editor"
+		end
+	elseif state == "screen" then
+		if k == keys.leftCtrl then
+			state = "menu"
+			clear = true
+		end
+	end
+end
+
+function on.char(c)
+	if state == "editor" then
+		local b = lines[cy]:sub(1,cx-1)
+		local a = lines[cy]:sub(cx)
+		lines[cy] = b..c..a
+		cx = cx+1
+	elseif state == "menu" then
+		if menu[c] then
+			local can = true
+			if menu[c][3] then
+				can = menu[c][3]
+			end
+			if can then
+				menu[c][2]()
+				if state == "menu" then
+					state = "editor"
+				end
+			end
+		end
+	end
+end
+
+function on.rednet_message(id,msg)
+	if id == Hotcode.connectedTo and msg == "HotCode:Disconnect" then
+		disconnect()
+		sleep(2)
+		--Attempting to reconnect--
+		term.clear()
+		term.write("Attempting to reconnect to "..id)
+		connect(id)
+	end
+	if id == Hotcode.connectedTo and msg:find("HotCode:Term") then
+		local f, args = msg:match("HotCode:Term:([^:]+):(.+)")
+		args = textutils.unserialize(args)
+		if not screen then
+			screen = softwareterm.new(w,h)
+			screen.setTextColor(colors.black)
+			screen.setBackgroundColor(colors.white)
+		end
+		if not screen[f] then term.setCursorPos(1,1)error(f) end
+		screen[f](unpack(args))
+	end
+end
+
+while true do
+	redraw()
+	local ev = {os.pullEvent()}
+	local args = {unpack(ev)} table.remove(args,1)
+	if on[ev[1]] then
+		on[ev[1]](unpack(args))
+	end
+end

@@ -1,0 +1,541 @@
+Hotcode = {isConnected = false, connectedTo = -1}
+function connect(id)
+	--This connects a computer for use with HotCode--
+	rednet.send(id,"HotCode:Connect")
+	while true do
+		local nid, msg = rednet.receive()
+		if nid == id then
+			if msg == "HotCode:Accept" then
+				break
+			end
+		end
+	end
+	Hotcode.isConnected = true
+	Hotcode.connectedTo = id
+end
+--[[
+Basis of what will happen:
+hotcode will take the lua, and parse it into simple tokens
+These tokens are taken and change all blocks into functions
+Loops will become functions that will run their blocks
+
+Real lua code:
+local message = "Hello!"
+while true do
+	for i = 1, 10 do
+		print(message)
+	end
+	sleep(0)
+	if math.random(1,5) == 4 then
+		return 4
+	end
+end
+
+Converted lua code:
+local message = "Hello!"
+function Loops.while1block()
+	function Loops.for1block(i)
+		print("Hello!")
+	end
+	function Loops.for1eval()
+		return 1, 10, 1
+	end
+	function Loops.for1()
+		local f = Loops.for1eval
+		local s,e,j = f()
+		local i = s
+		while i<e do
+			Loops.for1block(i)
+			if Loops.for1break then
+				break
+			end
+			i = i+j
+			if Loops.for1eval ~= f then
+				s,e,j = Loops.for1eval()
+				f = Loops.for1eval
+			end
+		end
+	end
+	Loops.for1()
+	sleep(0)
+	if math.random(1,5) == 4 then
+		Loops.while1return = {4}
+	end
+end
+function Loops.while1eval()
+	return true
+end
+function Loops.while1()
+	while Loops.while1eval() do
+		Loops.while1block()
+		if Loops.while1break then
+			break
+		elseif Loops.while1return then
+			return unpack(Loops.while1return)
+		end
+	end
+end
+
+Loops.while1()
+
+Code like this allows for hotcoding of loops midrun.
+All I need to do it change the function, and then it starts running the new function.
+Now, loop evals can be changed in realtime too.
+This allows for the program to be almost altered in realtime.
+local message = "Hello!"
+while true do
+	for i = 1, 10 do
+		print(message)
+	end
+	sleep(0)
+	if math.random(1,5) == 4 then
+		break
+	end
+end
+
+--Generic For--
+function Loops.for1block(i,v)
+	print(i," ",v)
+end
+function Loops.for1eval()
+	return pairs(t)
+end
+function Loops.for1()
+	local f, t
+	local args = {Loops.for1eval()}
+	f = args[1]
+	t = args[2]
+	table.remove(args,1)
+	table.remove(args,1)
+	while #args>0 do
+		Loops.for1block(unpack(args))
+		args = {f(t,unpack(args))}
+	end
+end
+]]
+local code = [[local message = "Hello, \nWorld!"
+while true do
+	--for i = 1, 10 do
+		print(message)
+	--end
+	sleep(1)
+end]]
+local funcs--This contains all the function definitions as strings
+local loops = {whiles={},fors={}} --Contains all loops
+local handle = {}
+local locals = {}
+local localstack = {}
+local currentLoop
+local useLoopHotcode = true
+local useLoopReturn = true--When you go inside a function, you want to turn this off
+local addEndPop = true
+function disconnect()
+	rednet.send(Hotcode.connectedTo,"HotCode:Disconnect")
+	Hotcode = {isConnected = false, connectedTo = -1}
+	funcs = nil
+	loops = {whiles={},fors={}}
+	locals = {}
+	localstack = {}
+	useLoopHotcode = true
+end
+local function block(b)
+	local c = {}
+	table.insert(localstack,1,locals)
+	locals = {}
+	for i,v in pairs(localstack[1]) do
+		locals[i] = v
+	end
+	table.insert(c,"Locals.push()")
+	for i, v in pairs(b) do
+		if v[1] ~= nil then
+			if handle[v[1]] then
+				table.insert(c,handle[v[1]](v,i,#c+1))
+			else
+				table.insert(c,v[1])
+			end
+		end
+	end
+	locals = localstack[1]
+	table.remove(localstack,1)
+	if addEndPop then
+		if c[#c] == "break" then
+			table.insert(c,#c-1,"Locals.pop()")
+		else
+			table.insert(c,"Locals.pop()")
+		end
+	else
+		addEndPop = true
+	end
+	return table.concat(c,"\n")
+end
+local function exp(t)
+	if t == nil then
+		return "nil"
+	end
+	if t[1] == "()" then
+		return "("..exp(t[2])..")"
+	elseif t[1] == "[]" then
+		print(exp(t[2]).."["..exp(t[3]).."]")
+		return exp(t[2]).."["..exp(t[3]).."]"
+	elseif t[1] == "con" then
+		if type(t[2]) ~= "string" then
+			return tostring(t[2])
+		else
+			local pre = '"'
+			local ret = t[2]:gsub("(\\)","\\\\")
+			ret = ret:gsub("(\n)","\\n")
+			ret = ret:gsub("(\f)","\\f")
+			ret = ret:gsub("(\r)","\\r")
+			ret = ret:gsub("(\t)","\\t")
+			ret = ret:gsub("(\v)","\\v")
+			ret = ret:gsub("(\b)","\\b")
+			ret = ret:gsub("(\")","\\\"")
+			ret = ret:gsub("(')","\\'")
+			return pre..ret..pre
+		end
+	elseif t[1] == "call" then
+		return handle["call"](t,0)
+	elseif t[1] == "=" then
+		return handle["="](t,0)
+	elseif t[1] == "." then
+		print(textutils.serialize(t[3]))
+		return exp({"id",t[2]}).."."..t[3]
+	elseif t[1] == "id" then
+		return t[2]
+	elseif t[1] == "..." then
+		return t[1]
+	elseif t[1] == "var" then
+		print(t[2])
+		if locals[t[2]] then
+			return "Locals.get(\""..t[2].."\")"
+		else
+			return t[2]
+		end
+	elseif t[1] == "func" then
+		--print(block(t[2][2]))
+		local oldlret = useLoopReturn
+		useLoopReturn = false
+		local ret = block(t[2][2])
+		useLoopReturn = oldlret
+		return "function ("..table.concat(t[2][1],",")..") "..ret.." end"
+	elseif t[1] == "tcon" then
+		--sample table: {"tcon",{{"auto",{"con",4}}}}
+		local tab = {}
+		for i, v in pairs(t[2]) do
+			if v[1] == "auto" then
+				table.insert(tab,exp(v[2]))
+			else
+				tab[exp(v[1])] = exp(v[2])
+			end
+		end
+		local ret = "{"
+		for i,v in pairs(tab) do
+			ret=ret.."["..i.."]="..v..","
+		end
+		print(ret.."}")
+		return ret.."}"
+	elseif t[1] == "not" or t[1] == "#" then
+		return t[1].." "..exp(t[2])
+	end
+	print(t[1])
+	print(textutils.serialize(t))
+	return exp(t[2]).." "..t[1].." "..exp(t[3])
+end
+local function blockf(b)
+	--We are only looking for functions--
+	local c = {}
+	for i, v in pairs(b) do
+		if v[1] == "funcst" then
+			local fname = table.concat(v[2],"."):sub(3)
+			local fbody = block(v[3][2])
+			print("Function: "..fname)
+			--textutils.pagedPrint("Body: "..fbody)
+			table.insert(c,{fname,fbody,table.concat(v[3][1],",")})
+		end
+	end
+	return c
+end
+handle["funcst"] = function(ast,i)
+	if locals[table.concat(ast[2],".")] then
+		return handle["lfunc"](ast,i)
+	end
+	local oldlret = useLoopReturn
+	useLoopReturn = false
+	local c = "function "..table.concat(ast[2],"."):sub(3).."("
+	c = c..table.concat(ast[3][1],",")
+	c = c..") "..block(ast[3][2])
+	useLoopReturn = oldlret
+	return c.." end"
+end
+handle["lfunc"] = function(ast,i)
+	local oldlret = useLoopReturn
+	useLoopReturn = false
+	local c = "Locals.set(\""..ast[2].."\",function ("
+	c = c..table.concat(ast[3][1],",")
+	c = c..") "..block(ast[3][2])
+	locals[ast[2]] = true
+	useLoopReturn = oldlret
+	return c.." end)"
+end
+handle["return"] = function(ast,i)
+	local args = ""
+	for i, v in pairs(ast[2]) do
+		args = args..exp(v)..","
+	end
+	if not (useLoopReturn and currentLoop ~= nil) then
+		args = args.."Loops.pop(),"
+	end
+	args = args:sub(1,#args-1)
+	if useLoopReturn and currentLoop ~= nil then
+		return "Loops."..currentLoop.."return = {"..args.."}"
+	else
+		addEndPop = false
+		return "return "..args
+	end
+end
+handle["local"] = function (ast,i)
+	print("Local value")
+	local s = ""
+	for i, v in pairs(ast[2]) do
+		s = s.."Locals.set(\""..v.."\","..exp((ast[3]or{[i]=nil})[i])..")\n"
+		locals[v] = true
+	end
+	s = s:sub(1,#s-1)
+	print(s)
+	return s
+end
+handle["="] = function (ast,i)
+	print("Values: ")
+	local s = ""
+	for i, v in pairs(ast[2]) do
+		local nv
+		if v[1] == "var" then
+			nv = v[2]
+			print(v[2])
+		else
+			--print(v)
+			nv = exp(v)
+			print(nv)
+		end
+		if locals[nv] then
+			s = s.."Locals.set(\""..nv.."\","..exp(ast[3][i])..")\n"
+		else
+			s = s..nv.."="..exp(ast[3][i]).."\n"
+		end
+	end
+	s = s:sub(1,#s-1)
+	print(s)
+	read()
+	return s
+end
+handle["nfor"] = function(ast,i,line)
+	if useLoopHotcode then
+		local oldlret = useLoopReturn
+		useLoopReturn = false
+		local fid = #loops.fors+1
+		local oldLoop = currentLoop
+		currentLoop = "for"..fid
+		table.insert(loops.fors,true)
+		local f = {"n",ast[2],exp(ast[3]),exp(ast[4]),exp(ast[5]),block(ast[6]),{unpack(locals)}}
+		currentLoop = oldLoop
+		useLoopReturn = oldlret
+		return "function Loops.for"..fid.."block("..f[2]..") "..f[6].." end\n".."function Loops.for"..fid.."eval() return "..f[3]..","..f[4]..","..f[5].." end\n"..[[function Loops.for]]..fid..[[()
+			local f = Loops.for]]..fid..[[eval
+			local s,e,j = f()
+			local i = s
+			while i<e do
+				Loops.for]]..fid..[[block(i)
+				if Loops.for]]..fid..[[break then
+					break
+				elseif Loops.for]]..fid..[[return then
+					return unpack(Loops.for]]..fid..[[return)
+				end
+				i = i+j
+				if Loops.for]]..fid..[[eval ~= f then
+					s,e,j = Loops.for]]..fid..[[eval()
+					f = Loops.for]]..fid..[[eval
+				end
+			end
+		end
+		]].."Loops.for"..fid.."()"
+	else
+		return "for "..ast[2].."="..exp(ast[3])..","..exp(ast[4])..","..exp(ast[5]).."do "..block(ast[6]).." end"
+	end
+end
+handle["gfor"] = function(ast,i,line)
+	if useLoopHotcode then
+		local oldlret = useLoopReturn
+		useLoopReturn = false
+		local fid = #loops.fors+1
+		local oldLoop = currentLoop
+		currentLoop = "for"..fid
+		table.insert(loops.fors,true)
+		local f = {"n",table.concat(ast[2],","),{},block(ast[4]),{unpack(locals)}}
+		for i, v in pairs(ast[3]) do
+			table.insert(f[3],exp(v))
+		end
+		f[3] = table.concat(f[3],",")
+		currentLoop = oldLoop
+		useLoopReturn = oldlret
+		return "function Loops.for"..fid.."block("..f[2]..") "..f[4].." end\n".."function Loops.for"..fid.."eval() return "..f[3].." end\n"..[[function Loops.for]]..fid..[[()
+	local f, t
+	local args = {Loops.for]]..fid..[[eval()}
+	f = args[1]
+	t = args[2]
+	table.remove(args,1)
+	table.remove(args,1)
+	while #args>0 do
+		Loops.for]]..fid..[[block(unpack(args))
+		args = {f(t,unpack(args))}
+	end
+end
+		]].."Loops.for"..fid.."()"
+	else
+		local e = {}
+		for i, v in pairs(ast[3]) do
+			table.insert(e,exp(v))
+		end
+		e = table.concat(e,",")
+		return "for "..table.concat(ast[2],",").." in "..e.." do "..block(ast[4]).." end"
+	end
+end
+handle["while"] = function(ast,i)
+	if useLoopHotcode then
+		local oldlret = useLoopReturn
+		useLoopReturn = false
+		local wid = #loops.whiles+1
+		-- local r = print
+		-- print = textutils.pagedPrint
+		-- print(ast)
+		-- local function re(t)
+			-- for i, v in pairs(t) do
+				-- if type(v) == "table" then
+					-- print(tostring(i).."{")
+					-- re(v)
+					-- print("}")
+				-- else
+					-- print(v)
+				-- end
+			-- end
+		-- end
+		-- re(ast)
+		-- print = r
+		local oldLoop = currentLoop
+		currentLoop = "while"..wid
+		table.insert(loops.whiles,true)
+		local w = {exp(ast[2]),block(ast[3]),{unpack(locals)}}
+		currentLoop = oldLoop
+		useLoopReturn = oldlret
+		return "function Loops.while"..wid.."block() "..w[2].." end\n".."function Loops.while"..wid.."eval() return "..w[1].." end\n"..[[function Loops.while]]..wid..[[()
+			while Loops.while]]..wid..[[eval() do
+				Loops.while]]..wid..[[block(i)
+				if Loops.while]]..wid..[[break then
+					break
+				elseif Loops.while]]..wid..[[return then
+					return unpack(Loops.while]]..wid..[[return)
+				end
+			end
+		end
+		]].."Loops.while"..wid.."()"
+	else
+		return "while "..exp(ast[2]).." do "..block(ast[3]).." end"
+	end
+end
+handle["break"] = function(ast,i)
+	return useLoopHotcode and "Loops."..currentLoop.."break = true" or "break"
+end
+handle["call"] = function (ast,i)
+	local c = exp(ast[2]).."("
+	for i, v in pairs(ast[3]) do
+		c = c..exp(v)..","
+	end
+	if #ast[3] > 0 then
+		c = c:sub(1,#c-1)
+	end
+	return c..")"
+end
+handle["if"] = function (ast, i)
+	local c = "if "..exp(ast[2]).." then "..block(ast[3])
+	if #ast>3 then
+		if #ast%2 == 0 then
+			for i = 4, #ast-1, 2 do
+				c = c.." elseif "..exp(ast[i]).." then "..block(ast[i+1])
+			end
+			c = c.." else "..block(ast[#ast])
+		else
+			for i = 4, #ast-1, 2 do
+				c = c.." elseif "..exp(ast[i]).." then "..block(ast[i+1])
+			end
+		end
+	end
+	return c.." end"
+end
+dofile("ccidetokenizer")--Exerpt from immibis's Lua in Lua. This will tokenize!
+function split(str, pat)
+   local t = {}  -- NOTE: use {n = 0} in Lua-5.0
+   local fpat = "(.-)" .. pat
+   local last_end = 1
+   local s, e, cap = str:find(fpat, 1)
+   while s do
+      if s ~= 1 or cap ~= "" then
+	 table.insert(t,cap)
+      end
+      last_end = e+1
+      s, e, cap = str:find(fpat, last_end)
+   end
+   if last_end <= #str then
+      cap = str:sub(last_end)
+      table.insert(t, cap)
+   end
+   return t
+end
+function hotcode(code)
+	useLoopHotcode = true
+	loops = {whiles={},fors={}}
+	local tokens = tokenize(code)
+	--print(textutils.serialize(tokens))
+	local b = split(block(tokens),"\n")
+	table.insert(b,1,"Loops = {}")
+	print(table.concat(b,"\n"))
+	local fh = fs.open("test","w")
+	fh.writeLine(textutils.serialize(tokens))
+	fh.writeLine("----------------------------------------------------------------")
+	fh.writeLine(table.concat(b,"\n"))
+	fh.flush()
+	--Next, we have to pass our newly generated code into the parser again to get all the functions--
+	useLoopHotcode = false
+	local func = blockf(tokenize(table.concat(b,"\n")))
+	--Now that we know what functions exist, we can put them in a table and sync them--
+	if not funcs then
+		funcs = func
+		rednet.send(1,"HotCode:InitalRunCode:"..table.concat(b,"\n"))
+	else
+		for i, v in pairs(func) do
+			local fname = v[1]
+			local c
+			--Now, find fname in funcs
+			for e,g in pairs(funcs) do
+				if g[1] == fname then
+					c = g
+					break
+				end
+			end
+			if c then
+				--Compare the bodys--
+				if v[2] ~= c[2] or v[3] ~= c[3] then
+					--Bodys don't match, send it!
+					rednet.send(1,"HotCode:UpdateCode:"..v[1].."; "..v[3].." ;"..v[2])
+				end
+			else
+				--Make this a new function!--
+				rednet.send(1,"HotCode:UpdateCode:"..v[1].."; "..v[3].." ;"..v[2])
+			end
+		end
+		--func[1][2] = func[1][2]:gsub('print%(Locals.get%("message"%)%)','print%(Locals.get%("message"%).."lol"%)')
+		--print(func[1][2])
+		--rednet.send(1,"HotCode:UpdateCode:"..func[1][1]..";"..func[1][3]..";"..func[1][2])
+	end
+	--fh.writeLine("----------------------------------------------------------------")
+	--fh.writeLine(func[1][2])
+	fh.close()
+end

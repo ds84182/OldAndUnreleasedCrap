@@ -1,0 +1,546 @@
+local function parse(tokens)
+        local ntok = 1
+        local tdata, context = nil, tokens[1][3]
+        local function accept(name)
+                if ntok > #tokens then return false end
+                if tokens[ntok][1] == name then
+                        ntok = ntok + 1
+                        tdata = tokens[ntok-1][2]
+                        context = tokens[ntok-1][3]
+                        --print("accepted "..name)
+                        return true
+                end
+                return false
+        end
+       
+        local function peek(name)
+                return ntok <= #tokens and tokens[ntok][1] == name
+        end
+       
+        local function expect(name)
+                if not accept(name) then error("expected "..name.." near "..tokens[ntok][3],2) end
+                return tdata
+        end
+       
+        local function assert(a, b)
+                if a == nil then error(b.." near "..tokens[ntok][3],2) end
+                return a
+        end
+       
+        local block, stat, laststat, funcname, varlist, var, namelist, explist, exp, prefixexp, functioncall, args, function_, funcbody
+        local parlist, tableconstructor, fieldlist, field, fieldsep, binop, unop
+       
+        function block()
+                local r = {}
+                local s
+                repeat
+                        s = stat()
+                        table.insert(r, s)
+                        accept(";")
+                until s == nil
+                table.insert(r, laststat())
+                accept(";")
+                return r
+        end
+       
+        function stat()
+                local nt = ntok
+                do
+                        local vl = varlist()
+                        if vl ~= nil then
+                                expect("=")
+                                local al = explist()
+                                if al == nil then return nil end
+                                return {"=", vl, al	}
+                        end
+                end
+               
+                ntok = nt
+                do
+                        local fc = prefixexp()
+                        if fc ~= nil and (fc[1] == "call" or fc[1] == ":call") then return fc end
+                end
+               
+                local ctx = context
+               
+                ntok = nt
+                if accept("do") then
+                        local b = assert(block(), "expected block")
+                        expect("end")
+                        return {"block", b}
+                elseif accept("while") then
+                        local e = exp()
+                        if e == nil then error("expected expression") end
+                        expect("do")
+                        local b = assert(block(), "expected block")
+                        expect("end")
+                        return {"while", e, b, context=ctx}
+                elseif accept("repeat") then
+                        local b = block()
+                        expect("until")
+                        local e = exp()
+                        if e == nil then error("expected expression") end
+                        return {"repeat", b, e, context=ctx}
+                elseif accept("if") then
+                        local r = {"if", context=ctx}
+                        table.insert(r, assert(exp(), "expected expression"))
+                        expect("then")
+                        table.insert(r, block())
+                        while accept("elseif") do
+                                table.insert(r, assert(exp(), "expected expression"))
+                                expect("then")
+                                table.insert(r, block())
+                        end
+                        if accept("else") then
+                                table.insert(r, block())
+                        end
+                        expect("end")
+                        return r
+                elseif accept("for") then
+                        nt = ntok
+                        local nl = namelist()
+                        if nl == nil or not accept("in") then
+                                ntok = nt
+                                -- numeric for
+                                expect("id")
+                                local id = tdata
+                                expect("=")
+                                local start = assert(exp(), "expected expression")
+                                expect(",")
+                                local stop = assert(exp(), "expected expression")
+                                local step = {"con", 1}
+                                if accept(",") then
+                                        step = assert(exp(), "expected expression")
+                                end
+                                expect("do")
+                                local b = block()
+                                expect("end")
+                                return {"nfor", id, start, stop, step, b, context=ctx}
+                        else
+                                -- generic for
+                                local el = explist()
+                                expect("do")
+                                local b = block()
+                                expect("end")
+                                return {"gfor", nl, el, b, context=ctx}
+                        end
+                elseif accept("function") then
+                        local fn = assert(funcname(), "expected funcname")
+                        local fb = funcbody()
+                        return {"funcst", fn, fb, context=ctx}
+                elseif accept("local") then
+                        if accept("function") then
+                                local id = expect("id")
+                                local fb = funcbody()
+                                return {"lfunc", id, fb, context=ctx}
+                        else
+                                local nl, el = assert(namelist(), "expected namelist")
+                                if accept("=") then
+                                        el = assert(explist(), "expected explist")
+                                end
+                                return {"local", nl, el, context=ctx}
+                        end
+                else
+                        return nil
+                end
+        end
+       
+        function laststat()
+                if accept("return") then
+                        local nt = ntok
+                        local el = explist()
+                        if el == nil then ntok = nt end
+                        return {"return", el	}
+                elseif accept("break") then
+                        return {"break"	}
+                else
+                        return nil
+                end
+        end
+       
+        function funcname()
+                local n = {".", expect("id")}
+                while accept(".") do
+                        table.insert(n, expect("id"))
+                end
+                if accept(":") then
+                        n[1] = ":"
+                        table.insert(n, expect("id"))
+                end
+                return n
+        end
+       
+        function varlist()
+                local l = {}
+                repeat
+                        local v = var()
+                        if v == nil then
+                                return nil
+                        end
+                        table.insert(l, v)
+                until not accept(",")
+                return l
+        end
+       
+        function var()
+                local nt = ntok
+                local pe = prefixexp()
+                if pe == nil or (pe[1] ~= "[]" and pe[1] ~= "." and pe[1] ~= "var") then
+                        ntok = nt
+                        return nil
+                end
+                return pe
+        end
+       
+        function namelist()
+                local l = {expect("id")}
+                while accept(",") do
+                        table.insert(l, expect("id"))
+                end
+                return l
+        end
+       
+        function explist()
+                local l = {exp()}
+                if l[1] == nil then return {} end
+                while accept(",") do
+                        table.insert(l, assert(exp(), "expected expression"))
+                end
+                return l
+        end
+       
+        local function exp0()
+                if accept("nil") then return {"con", nil	} end
+                if accept("true") then return {"con", true	} end
+                if accept("false") then return {"con", false	} end
+                if accept("num") then return {"con", tonumber(tdata)	} end
+                if accept("str") then return {"con", tdata	} end
+                if accept("...") then return {"..."	} end
+                if accept("function") then return {"func", funcbody()	} end
+                if accept("-") then return {"negate", exp0()	} end
+                if accept("not") then return {"not", exp0()	} end
+                if accept("#") then return {"#", exp0()	} end
+                if peek("{") then return {"tcon", tableconstructor()	} end
+                do
+                        local nt = ntok
+                        local pe = prefixexp()
+                        if pe ~= nil then
+                                return pe
+                        end
+                        ntok = nt
+                end
+                if accept("(") then
+                        local e = assert(exp(), "expected expression")
+                        expect(")")
+                        return e
+                end
+                return nil
+        end
+       
+        local function exp1()
+                local e = exp0()
+                if e == nil then return nil end
+                -- right associative
+                -- {"^", a, {"^", b, {"^", c, d}}}
+                if accept("^") then
+                        e = {"^", e, assert(exp0(), "expected expression")	}
+                        local last = e
+                        while accept("^") do
+                                last[3] = {"^", last[3], assert(exp0(), "expected expression")	}
+                                last = last[3]
+                        end
+                end
+                return e
+        end
+       
+        local function exp1_5()
+                local e = exp1()
+                if e == nil then return nil end
+                while accept("%") do e={"%", e, assert(exp1(), "expected expression")	} end
+                return e
+        end
+       
+        local function exp2()
+                local e = exp1_5()
+                if e == nil then return nil end
+                while accept("/") do e={"/", e, assert(exp1_5(), "expected expression")	} end
+                return e
+        end
+       
+        local function exp3()
+                local e = exp2()
+                if e == nil then return nil end
+                while accept("*") do e={"*", e, assert(exp2(), "expected expression")	} end
+                return e
+        end
+       
+        local function exp4()
+                local e = exp3()
+                if e == nil then return nil end
+                while accept("-") do e={"-", e, assert(exp3(), "expected expression")	} end
+                return e
+        end
+       
+        local function exp5()
+                local e = exp4()
+                if e == nil then return nil end
+                while accept("+") do e={"+", e, assert(exp4(), "expected expression")	} end
+                return e
+        end
+       
+        local function exp6()
+                local e = exp5()
+                if e == nil then return nil end
+                -- right associative
+                -- {"^", a, {"^", b, {"^", c, d}}}
+                if accept("..") then
+                        e = {"..", e, assert(exp5(), "expected expression")}
+                        local last = e
+                        while accept("..") do
+                                last[3] = {"..", last[3], assert(exp5(), "expected expression")	}
+                                last = last[3]
+                        end
+                end
+                return e
+        end
+       
+        local function exp7()
+                local e = exp6()
+                if e == nil then return nil end
+                while accept(">") or accept(">=") or accept("<") or accept("<=") or accept("==") or accept("~=") do
+                        e = {tdata, e, assert(exp6(), "expected expression")	}
+                end
+                return e
+        end
+       
+        local function exp8()
+                local e = exp7()
+                if e == nil then return nil end
+                while accept("and") do e={"and", e, assert(exp7(), "expected expression")	} end
+                return e
+        end
+       
+        local function exp9()
+                local e = exp8()
+                if e == nil then return nil end
+                while accept("or") do e={"or", e, assert(exp8(), "expected expression")	} end
+                return e
+        end
+       
+        function exp()
+                return exp9()
+        end
+       
+        function prefixexp()
+                -- prefixexp = Name | prefixexp [ exp ] | prefixexp . Name | prefixexp : Name args | prefixexp args | ( exp )
+                local r
+                if accept("id") then
+                        r = {"var", tdata	}
+                elseif accept("(") then
+                        local e = assert(exp(), "expression expected")
+                        expect(")")
+                        r = {"()", e	}
+                else
+                        return nil
+                end
+                while true do
+                        if accept(".") then
+                                local e = expect("id")
+                                r = {".", r, e	}
+                        elseif accept("[") then
+                                local e = assert(exp(), "expression expected")
+                                expect("]")
+                                r = {"[]", r, e	}
+                        elseif peek("(") or peek("{") or peek("str") then
+                                local e = args()
+                                r = {"call", r, e	}
+                        elseif accept(":") then
+                                local i = expect("id")
+                                local e = args()
+                                r = {":call", r, i, e	}
+                        else
+                                break
+                        end
+                end
+                return r
+        end
+ 
+        function funcbody()
+                local p, b
+                expect("(")
+                if not accept(")") then
+                        p = parlist()
+                        expect(")")
+                else
+                        p = {}
+                end
+                b = block()
+                expect("end")
+                return {p, b}
+        end
+       
+        function parlist()
+                if accept("...") then return {"..."} end
+                local l = {expect("id")}
+                while accept(",") do
+                        if accept("...") then
+                                table.insert(l, "...")
+                                break
+                        else
+                                table.insert(l, expect("id"))
+                        end
+                end
+                return l
+        end
+       
+        function tableconstructor()
+                expect("{")
+                local fl = fieldlist()
+                expect("}")
+                return fl
+        end
+       
+        function fieldlist()
+                local fl = {}
+                while true do
+                        local f = field()
+                        if f == nil then break end
+                        table.insert(fl, f)
+                        if not accept(";") and not accept(",") then break end
+                end
+                return fl
+        end
+       
+        function field()
+                if accept("[") then
+                        local e = assert(exp(), "expression expected")
+                        expect("]")
+                        expect("=")
+                        return {e, assert(exp(), "expression expected")}
+                end
+                local nt = ntok
+                if accept("id") then
+                        local e = {"con", tdata}
+                        if accept("=") then
+                                return {e, assert(exp(), "expression expected")}
+                        else
+                                ntok = nt
+                        end
+                end
+                local e = exp()
+                if e == nil then return nil end
+                return {"auto", e}
+        end
+       
+        function args()
+                if peek("{") then return {{"tcons", tableconstructor()	}} end
+                if accept("str") then return {{"con", tdata	}} end
+                expect("(")
+                local el = explist()
+                expect(")")
+                return el
+        end
+       
+        return block()
+end
+
+function tokenize(c, locprefix)
+        local tokens = {}
+       
+        locprefix = locprefix or "[string]"
+ 
+        local pos = 1
+		local spos = 1
+       
+        local line = 1
+        local char = 1
+ 
+        local lasttok
+        local function accept(regex)
+                --print(regex, " ", pos)
+                --yield()
+                local r = c:match("^"..regex, pos)
+                if r == nil then return false end
+                lasttok = r
+                pos = pos + #lasttok
+               
+                for k=1,#r do
+                        if r:sub(k,k) == "\n" then
+                                line = line + 1
+                                char = 1
+                        else
+                                char = char + 1
+                        end
+                end
+               
+                return true
+        end
+       
+        local function getContext()
+                --return {prefix=locprefix, line=line, char=char, spos=spos, epos=pos}
+                return c:sub(pos, pos+100)
+        end
+ 
+        local keywords = {"do","end","function","while","repeat","until","if","then","elseif","then","else","for","in","local","return","break",
+        "nil","false","true",
+        "%.%.%.","==","~=","%.%.","<=",">=","and","or","not",
+        "[-+;.:+*/,=%[%]%(%)%<%>%^%%#{}]"}
+        local function tokenise1()
+                accept("[ \r\n\t]+")
+				spos = pos
+                if accept("%-%-%[%[") then
+                        while not accept("%]%]") do
+                                if not accept("[^%]]+") then accept(".") end
+                        end
+                        return tokenise1()
+                end
+                if accept("%-%-[^\n]*\n") then return tokenise1() end
+                if accept("[a-zA-Z_][a-zA-Z_0-9]*") then
+                        for k,v in ipairs(keywords) do
+                                if lasttok == v then return v end
+                        end
+                        return "id"
+                end
+                for k,v in ipairs(keywords) do if accept(v) then return lasttok end end
+                if accept("[0-9]+%.[0-9]*") or accept("[0-9]+") then return "num" end
+                if accept("\"") or accept("%[%[") then
+                        local s = ""
+                        local long = lasttok == "[["
+                        local _end = long and "%]%]" or "\""
+                        while not accept(_end) do
+                                if accept("\\") then
+                                                if accept("a") then s=s.."\a"
+                                        elseif accept("b") then s=s.."\b"
+                                        elseif accept("f") then s=s.."\f"
+                                        elseif accept("n") then s=s.."\n"
+                                        elseif accept("r") then s=s.."\r"
+                                        elseif accept("t") then s=s.."\t"
+                                        elseif accept("v") then s=s.."\v"
+                                        elseif accept("\\") then s=s.."\\"
+                                        elseif accept("\"") then s=s.."\""
+                                        elseif accept("'") then s=s.."\'"
+                                        elseif accept("%[") then s=s.."["
+                                        elseif accept("%]") then s=s.."]"
+                                        elseif accept("[0-9][0-9][0-9]") or accept("[0-9][0-9]") or accept("[0-9]") then s=s..string.char(tonumber(lasttok))
+                                        end
+                                elseif accept(long and "[^%]\\]+" or "[^\n\"\\]+") then s=s..lasttok
+                                else error("unfinished string")
+                                end
+                        end
+                        lasttok = s
+                        return "str"
+                end
+                if pos > #c then lasttok="" return "<eof>" end
+                error("Unknown token near "..c:sub(pos-50,pos+100))
+                return nil
+        end
+ 
+        while pos <= #c do
+                local t = tokenise1()
+                if t == nil then --[[print(c:sub(pos,pos+100))]] break end
+				print(t," ",lasttok)
+                table.insert(tokens, {t, lasttok, getContext()})
+        end
+       
+        return parse(tokens)
+end

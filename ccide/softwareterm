@@ -1,0 +1,108 @@
+function new(w,h,c)
+	local rw, rh = term.getSize()
+	w = w or rw
+	h = h or rh
+	c = c or false
+	local textArray = {}
+	local colorArray = {}
+	for x = 1, w do
+		textArray[x] = {}
+		colorArray[x] = {}
+		for y = 1, h do
+			textArray[x][y] = " "
+			colorArray[x][y] = {colors.white,colors.black}
+		end
+	end
+	local x, y = 1,1
+	local fg, bg = colors.white, colors.black
+	local blink = false
+	local api = {}
+	function api.write(text)
+		for i = 1, #text do
+			if x>w then break end
+			textArray[x][y] = text:sub(i,i)
+			colorArray[x][y] = {fg, bg}
+			x = x+1
+		end
+	end
+	function api.setCursorPos(nx,ny)
+		x = nx or x
+		y = ny or y
+	end
+	function api.getCursorPos()
+		return x, y
+	end
+	function api.getSize()
+		return w, h
+	end
+	function api.setCursorBlink(b)
+		blink = b==true
+	end
+	function api.setTextColor(c)
+		fg = c
+	end
+	function api.setBackgroundColor(c)
+		bg = c
+	end
+	function api.clearLine()
+		local ox = x
+		x = 1
+		api.write(string.rep(" ",w))
+		x = ox
+	end
+	function api.clear()
+		local oy = y
+		for ny = 1, h do
+			y = ny
+			api.clearLine()
+		end
+		y = oy
+	end
+	function api.scroll()
+		for y=2, h do
+			for x=1, w-1 do
+				textArray[x][y-1] = textArray[x][y]
+			end
+		end
+		local oy = y
+		y = h
+		api.clearLine()
+		y = oy
+	end
+	function api.isColor()
+		return c
+	end
+	api.setTextColour = api.setTextColor
+	api.setBackgroundColour = api.setBackgroundColor
+	api.isColour = api.isColor
+	function api.draw(dx,dy)
+		local cfg, cbg = 1, 1
+		local t = ""
+		term.setCursorBlink(false)
+		for cy = 1, h do
+			term.setCursorPos(dx+1,dy+cy)
+			for cx = 1, w do
+				if cfg ~= colorArray[cx][cy][1] or cbg ~= colorArray[cx][cy][2] then
+					term.setTextColor(cfg)
+					term.setBackgroundColor(cbg)
+					term.write(t)
+					cfg = colorArray[cx][cy][1]
+					cbg = colorArray[cx][cy][2]
+					t = textArray[cx][cy]
+				else
+					t = t..textArray[cx][cy]
+				end
+			end
+			term.setTextColor(cfg == -1 and 0 or cfg)
+			term.setBackgroundColor(cbg == -1 and 0 or cbg)
+			term.write(t)
+			t = ""
+		end
+		term.setTextColor(cfg == -1 and 0 or cfg)
+		term.setBackgroundColor(cbg == -1 and 0 or cbg)
+		term.write(t)
+		term.setCursorBlink(blink)
+		term.setCursorPos(x,y)
+	end
+	return api
+end

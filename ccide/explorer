@@ -1,0 +1,95 @@
+local tArgs = {...}
+local dir = tArgs[1] or "/"
+local selected = ""
+local selectedIndex = 1
+local existingFile = tArgs[2] or true
+local directory = tArgs[3] or false
+local fileTypes = tArgs[4]
+local fileList = {}
+local dirList = {}
+local function loadDir()
+	fileList = {}
+	dirList = {}
+	for i, v in pairs(fs.list(dir)) do
+		if fs.isDir(fs.combine(dir,v)) then
+			table.insert(dirList,v)
+		else
+			table.insert(fileList,v)
+		end
+	end
+end
+loadDir()
+
+local w, h = term.getSize()
+
+local function draw()
+	if selectedIndex <= #dirList then
+		selected = "/"..fs.combine(dir,dirList[selectedIndex])
+	else
+		selected = "/"..fs.combine(dir,fileList[selectedIndex-#dirList])
+	end
+	term.setBackgroundColor(colors.gray)
+	term.setTextColor(colors.white)
+	term.clear()
+	term.setCursorPos(1,1)
+	term.write("-"..dir..string.rep("-",w-(#dir+1)))
+	local a = 1
+	for i, v in pairs(dirList) do
+		term.setCursorPos(2,a+1)
+		if selectedIndex == a then
+			term.setBackgroundColor(colors.lightGray)
+			term.write(string.rep(" ",w-2))
+			term.setCursorPos(2,a+1)
+		end
+		term.write("D      "..v)
+		if selectedIndex == a then
+			term.setBackgroundColor(colors.gray)
+		end
+		a = a+1
+	end
+	for i, v in pairs(fileList) do
+		term.setCursorPos(2,a+1)
+		if selectedIndex == a then
+			term.setBackgroundColor(colors.lightGray)
+			term.write(string.rep(" ",w-2))
+			term.setCursorPos(2,a+1)
+		end
+		term.write("F      "..v)
+		if selectedIndex == a then
+			term.setBackgroundColor(colors.gray)
+		end
+		a = a+1
+	end
+	term.setCursorPos(1,h-1)
+	term.write(string.rep("-",w))
+	term.setCursorPos(1,h)
+	term.write("--[")
+	term.write(selected)
+	term.write("]"..string.rep("-",w-(4+#selected)))
+end
+
+local function key(k)
+	if k == keys.up then
+		if selectedIndex>1 then
+			selectedIndex = selectedIndex-1
+		end
+	elseif k == keys.down then
+		if selectedIndex<(#dirList+#fileList) then
+			selectedIndex = selectedIndex+1
+		end
+	elseif k == keys.enter then
+		if selectedIndex <= #dirList then
+			dir = "/"..fs.combine(dir,dirList[selectedIndex])
+			loadDir()
+		else
+			return "/"..fs.combine(dir,fileList[selectedIndex-#dirList])
+		end
+	end
+end
+
+while true do
+	draw()
+	local e,k = os.pullEvent("key")
+	local r = key(k)
+	if r then return r end
+end
