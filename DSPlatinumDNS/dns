@@ -1,0 +1,61 @@
+local dns = {}
+local function split(str, pat)
+	local t = {}	-- NOTE: use {n = 0} in Lua-5.0
+	local fpat = "(.-)" .. pat
+	local last_end = 1
+	local s, e, cap = str:find(fpat, 1)
+	while s do
+		if s ~= 1 or cap ~= "" then
+	table.insert(t,cap)
+		end
+		last_end = e+1
+		s, e, cap = str:find(fpat, last_end)
+	end
+	if last_end <= #str then
+		cap = str:sub(last_end)
+		table.insert(t, cap)
+	end
+	return t
+end
+function loadEnt()
+	local fh = fs.open("dnsent","r")
+	while true do
+		local str = fh.readLine()
+		if not str then
+			break
+		end
+		local d, s, i = str:match("(%w+)|(%w+)|(%d+)")
+		table.insert(dns, {domain=d,suffix=s,id=tonumber(i)})
+	end
+end
+function saveEnt()
+	local str = ""
+	for i, v in pairs(dns) do
+		str=str..v.domain.."|"..v.suffix.."|"..v.id.."\n"
+	end
+	str = str:sub(1,#str-1)
+	local fh = fs.open("dnsent","w")
+	fh.write(str)
+	fh.close()
+end
+loadEnt()
+rednet.open("right")
+while true do
+	local id, msg = rednet.receive()
+	if msg == "DNSPING" then
+		rednet.send(id,"DNS")
+		print("Ping from "..id)
+	elseif msg:match("^(DNSGET)") == "DNSGET" then
+		local r = msg:match("^DNSGET (.+)")
+		print(r)
+		if r:sub(1,4) == "www." then r = r:sub(5) end
+		local d, s = r:match("(%w+)%.(%w+)")
+		print(d)
+		print(s)
+		for i, v in pairs(dns) do
+			if v.domain == d and v.suffix == s then
+				rednet.send(id,tostring(v.id))
+			end
+		end
+	end
+end

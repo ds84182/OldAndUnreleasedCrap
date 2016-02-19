@@ -1,0 +1,38 @@
+loadfile("stream")()
+local function onMsg(id, msg)
+	if msg:match("^(GET)") then
+		local dir = msg:match("^GET (.+)")
+		if dir:sub(1,1) ~= "/" then dir = "/"..dir end
+		dir = "web"..dir
+		if not fs.exists(dir) then
+			print(id.." caused 404")
+			rednet.send(id,"404")
+		else
+			print("Sending "..id.." file "..dir)
+			local fh = fs.open(dir,"r")
+			ORednetStream(id, fh.readAll())
+			fh.close()
+			print("File sent!")
+		end
+	else
+		print("Invalid op! "..id)
+	end
+end
+local function videoStream(cid, msg)
+	local fh = fs.open("video","r")
+	local function wfm()
+		while true do
+			local id, msg = rednet.receive()
+			if id == cid then break end
+		end
+	end
+	while true do
+		wfm()
+		local line = fh.readLine()
+		if line == nil then break end
+		rednet.send(cid, line)
+	end
+end
+server.addHandler(onMsg,80)
+server.addHandler(videoStream, 60)
+server.start()

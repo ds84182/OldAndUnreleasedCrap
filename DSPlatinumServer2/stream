@@ -1,0 +1,47 @@
+--Various Stream Types--
+--Input Streams
+	--IRednetStream
+--Output Streams
+	--ORednetStream
+function IRednetStream(fid,datahand)
+	--First read the stream header--
+		--packetsize|packetnumber|overallsize--
+		--Most optimal packet size: 128b--
+	local function rec(id)
+		while true do
+			local sid, msg, dist = rednet.receive()
+			if sid == id then
+				return msg, dist
+			end
+		end
+	end
+	local psiz, pnum, posiz
+	local sh = rec(fid)
+	psiz, pnum, posiz = sh:match("^(%d+)|(%d+)|(%d+)")
+	psiz = tonumber(psiz)
+	pnum = tonumber(pnum)
+	posiz = tonumber(posiz)
+	--Now, for all of the incomming data
+	for i=1, pnum do
+		--Get all of the packets!
+		--Packet: packetnumber|data
+		local msg = rec(fid)
+		local pat = msg:match("^(%d+)|")
+		if tonumber(pat) ~= i then
+			error("Out of sync with input!")
+		end
+		datahand(msg:match("^%d+|(.+)"),pat,pnum)
+	end
+end
+
+function ORednetStream(tid,data,psiz,wait)
+	--Send stream header--
+	psiz = psiz or 256
+	wait = wait or 1/20
+	local pnum = math.ceil(#data/psiz)
+	rednet.send(tid, psiz.."|"..pnum.."|"..#data)
+	for i=1, pnum do
+		sleep(wait)
+		rednet.send(tid, i.."|"..data:sub(((i-1)*psiz)+1,(i)*psiz))
+	end
+end

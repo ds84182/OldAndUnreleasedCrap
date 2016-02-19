@@ -1,0 +1,36 @@
+local on = false
+local hand = {}
+rednet.open("right")
+server = {}
+function server.addHandler(func,port)
+	hand[port] = hand[port] or {}
+	table.insert(hand[port],func)
+end
+function server.stop()
+	on = false
+end
+function server.start()
+	on = true
+	print("Server START!")
+end
+function server.isStart()
+	return on
+end
+parallel.waitForAll(function()
+	while true do
+		sleep(1/20)
+		while on do
+			local id, msg, dist = rednet.receive()
+			local port, msg = msg:match("(%d+)|(.+)")
+			port = tonumber(port)
+			if msg ~= nil and port ~= nil then
+				print("Got "..msg.." from "..id.." on port "..port)
+				for i, v in pairs(hand[port]) do
+					v(id, msg, dist)
+				end
+			end
+		end
+	end
+end,
+function() shell.run("servinit") end
+)
