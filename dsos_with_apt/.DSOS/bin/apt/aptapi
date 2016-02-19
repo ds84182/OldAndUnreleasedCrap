@@ -1,0 +1,68 @@
+local apt = {}
+local aptlink = "http://ds84182.bugs3.com/apt/"
+local proglink = "http://ds84182.bugs3.com/files/dsos/apt/"
+function apt.list()
+	local web = http.get(aptlink.."ls.php")
+	local list = {}
+	local n = tonumber(web.readLine())
+	for i = 1, n do
+		table.insert(list,web.readLine())
+	end
+	web.close()
+	return list
+end
+
+function apt.exists(program)
+	local web = http.get(aptlink.."exists.php?program="..program)
+	local exists = web.readLine() == "true"
+	web.close()
+	return exists
+end
+
+local function download(url)
+	local web = http.get(url)
+	local r = web.readAll()
+	web.close()
+	return r
+end
+
+function apt.install(program)
+	if not apt.exists(program) then
+		printError("Program doesn't exist.")
+		return
+	end
+	--We need to download the inst file
+	fs.makeDir("bin/"..program)
+	local f = download(proglink..program.."/program.inst")
+	local i = 1
+	local cdir = "bin/"..program
+	while i<#f do
+		if i%64 == 0 then sleep(0) end
+		local t,n = f:match("([^:]+):([^:]+):",i)
+		if t == "FILE" then
+			print("extracting "..n)
+			i = i+6+#n
+			local l = f:match("(%d+):",i)
+			i = i+#l
+			local c = f:sub(i+1,i+tonumber(l))
+			local fh = fs.open(cdir.."/"..n,"w")
+			fh.write(c)
+			fh.close()
+			i = i+l
+		elseif t == "DIR" then
+			--Enter dir
+			cdir = fs.combine(cdir,n)
+			print("extracting dir "..cdir)
+			fs.makeDir(cdir)
+			i = i+5+#n
+		else
+			if f:find("ENDDIR",i) then
+				cdir = fs.combine(cdir,"..")
+				i = i+6
+			end
+		end
+		i = i+1
+	end
+end
+
+return apt

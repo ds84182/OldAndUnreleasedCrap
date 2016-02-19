@@ -1,0 +1,113 @@
+local pipeid = pipe.new(term.getSize())
+local oldterm = term
+term = pipe.getAPI(pipeid)
+term.clear()
+term.setCursorPos(1,1)
+print("DSOS v"..version.major.."."..version.minor.."."..version.build)
+print("DSOS Shell")
+local cdir = ""
+local cmdhist = {}
+if not os.isRoot(os.getCallingPID()) then
+	error("Shell needs ROOT")
+end
+local commands = {}
+function commands.ls(args)
+	local dir = fs.combine(cdir,args[1] or "")
+	for i, v in pairs(fs.list(dir)) do
+		print(v)
+	end
+end
+function commands.cd(args)
+	local dir = fs.combine(cdir,args[1] or "")
+	if fs.exists(dir) then
+		if fs.isDir(dir) then
+			cdir = dir
+		end
+	end
+end
+function commands.reboot(args)
+	os.reboot()
+	os.pullEvent()
+end
+function commands.shutdown(args)
+	os.shutdown()
+	os.pullEvent()
+end
+function commands.tasks(args)
+	for i, v in pairs(os.getAllProcesses()) do
+		print(i)
+	end
+end
+function split(str, pat)
+	local t = {}  -- NOTE: use {n = 0} in Lua-5.0
+	local fpat = "(.-)" .. pat
+	local last_end = 1
+	local s, e, cap = str:find(fpat, 1)
+	while s do
+		if s ~= 1 or cap ~= "" then
+			table.insert(t,cap)
+		end
+		last_end = e+1
+		s, e, cap = str:find(fpat, last_end)
+	end
+	if last_end <= #str then
+		cap = str:sub(last_end)
+		table.insert(t, cap)
+	end
+	return t
+end
+function render()
+	local newterm = term
+	term = oldterm
+	pipe.render(pipeid)
+	term = newterm
+end
+function run(dir,admin,args)
+	--It exists
+	local pid = os.run(dir,args)
+	--The command didn't preceed with sudo, unroot it
+	os.setPerms(pid,{root = admin, permaroot = false})
+	while true do
+		local e, npid, err = os.pullEvent("proc_end")
+		if npid == pid then
+			if err then
+				local e, npid, err = os.pullEvent("proc_err")
+				printError(err)
+			end
+			break
+		end
+	end
+end
+os.getTasker().addTask(function()
+	while true do
+		os.pullEvent()
+		sleep(0)
+		render()
+	end
+end,nil,nil,"")
+while true do
+	write(cdir.."> ")
+	local cmd = read(nil,cmdhist)
+	table.insert(cmdhist,cmd)
+	local s = split(cmd," ")
+	cmd = s[1]
+	table.remove(s,1)
+	local admin = false
+	if cmd == "sudo" then
+		admin = true
+		cmd = s[1]
+		table.remove(s,1)
+	end
+	if commands[cmd] then
+		commands[cmd](s,admin)
+	else
+		--We do a os.run
+		if fs.exists("bin/"..cmd) then
+			run("bin/"..cmd.."/program",admin,s)
+		elseif fs.exists(cdir.."/"..cmd) then
+			run(cdir.."/"..cmd,admin,s)
+		else
+			printError(cmd.." doesn't exist.")
+		end
+	end
+end

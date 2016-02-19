@@ -1,0 +1,57 @@
+print("DSOS v0.1 "..(emulated and "EMULATED"))
+if emulated then print("Application loadtimes are a bit slow, bear with me") end
+
+local function runProgram(cmd,args)
+	print("compiling!")
+	local f,e = loadstring(file.read("DSOS/bin/"..cmd), cmd)
+	print("compiled")
+	if not f then
+		print(e)
+	else
+		local s,e = pcall(f,unpack(args))
+		if not s then
+			print(e)
+		end
+	end
+end
+
+local cdir = ""
+
+local shellFunc = {}
+
+function shellFunc.cd(to)
+	local dir
+	if to:sub(1,1) == "/" then
+		dir = to
+	else
+		dir = file.combine(cdir,to)
+	end
+	if file.exists(dir) then
+		cdir = dir
+	else
+		print("Cannot find directory \""..dir.."\"")
+	end
+end
+
+while true do
+	write(cdir.."> ")
+	local r = read()
+	print("PARSEARGS")
+	local cmd
+	local args = {}
+	for arg in r:gmatch("([^ ]+)") do
+		if not cmd then
+			cmd = arg
+		else
+			table.insert(args,arg)
+		end
+	end
+	print("finished parsing")
+	if shellFunc[cmd] then
+		shellFunc[cmd](unpack(args))
+	elseif file.exists("DSOS/bin/"..cmd) then
+		runProgram(cmd,args)
+	else
+		print("Unknown program \""..cmd.."\"")
+	end
+end

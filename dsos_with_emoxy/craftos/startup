@@ -1,0 +1,35 @@
+
+local sPath = ".:/craftos/programs"
+if turtle then
+	sPath = sPath..":/craftos/programs/turtle"
+else
+	sPath = sPath..":/craftos/programs/computer"
+end
+if http then
+	sPath = sPath..":/craftos/programs/http"
+end
+if term.isColor() then
+	sPath = sPath..":/craftos/programs/color"
+end
+
+shell.setPath( sPath )
+help.setPath( "/craftos/help" )
+
+shell.setAlias( "ls", "list" )
+shell.setAlias( "dir", "list" )
+shell.setAlias( "cp", "copy" )
+shell.setAlias( "mv", "move" )
+shell.setAlias( "rm", "delete" )
+
+if fs.exists( "/craftos/autorun" ) and fs.isDir( "/craftos/autorun" ) then
+	local tFiles = fs.list( "/craftos/autorun" )
+	table.sort( tFiles )
+	for n, sFile in ipairs( tFiles ) do
+		if string.sub( sFile, 1, 1 ) ~= "." then
+			local sPath = "/craftos/autorun/"..sFile
+			if not fs.isDir( sPath ) then
+				shell.run( sPath )
+			end
+		end
+	end
+end

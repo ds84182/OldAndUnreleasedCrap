@@ -1,0 +1,5 @@
+loadLib("sha")
+
+print("HASHING!")
+print(sha.sha1("Hello"))
+print("Hashed")

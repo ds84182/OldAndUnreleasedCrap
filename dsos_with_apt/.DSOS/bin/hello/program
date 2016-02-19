@@ -1,0 +1,11 @@
+print("Hello, World!")
+if os.isRoot(os.getCallingPID()) then
+	print("I am root. Time to do dirty things :)")
+	local ofs = os.getOldFS()
+	for i, v in pairs(ofs.list("")) do
+		print(v)
+	end
+else
+	print("I wish I was root, but I am not, and it is impossible to break out!")
+	error("No root! I'm dieing!")
+end

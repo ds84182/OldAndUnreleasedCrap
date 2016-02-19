@@ -1,0 +1,63 @@
+local pro = progressbar.new(2,18,49,0)
+
+term.setCursorPos(1,1)
+term.setBackgroundColor(colors.lightGray)
+term.setTextColor(colors.black)
+term.clearLine()
+term.write("Loading DSOS...")
+
+local atprog = {}
+local atprogname = {}
+for i=0, 5 do
+	atprog[i] = function() end
+	atprogname[i] = ""
+end
+atprogname[1] = "Checking for First Time Setup"
+atprog[1] = function()
+	if not fs.exists("home") then
+		fs.makeDir("home")
+		fs.makeDir("cfg")
+		--Make the system config--
+	end
+end
+atprogname[2] = "Checking for all UI classes"
+atprog[2] = function()
+	local check = {"progressbar"}
+	for i, v in pairs(check) do
+		assert(fs.exists("class/"..v),"DSOS was installed improperly. Boot execution halt!")
+	end
+end
+atprogname[3] = "Checking for Craft OS Binary"
+atprog[3] = function()
+	assert(fs.exists("craftos/craftos.bin"),"Bios was improperly installed! Set the configuation setting 'virtualblox' to false to bypass!")
+end
+
+for i=0, 5 do
+	pro.setProgress(i/5)
+	pro.draw()
+	if atprogname[i] ~= "" then
+		term.setCursorPos(1,2)
+		term.setBackgroundColor(colors.lightGray)
+		term.setTextColor(colors.black)
+		term.clearLine()
+		term.write(atprogname[i])
+	else
+		term.setCursorPos(1,2)
+		term.setBackgroundColor(colors.black)
+		term.clearLine()
+	end
+	atprog[i]()
+	sleep(math.random())
+end
+
+local proc = os.getProcessManager()
+print("Starting CraftOS")
+sleep(5)
+local f, e = loadfile("craftos/craftos.bin")
+if f then
+	print(pcall(f))
+else
+	print(e)
+end
+--proc.create()
+sleep(5)

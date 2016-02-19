@@ -1,0 +1,44 @@
+fs.delete("install")
+local script = [[local parentdir = "https://raw.github.com/ds84182/DSOS/master/"
+
+]]
+
+local temp = [[
+
+
+local webfh = http.get(parentdir..'fname')
+local fh = fs.open('fname',"w")
+fh.write(webfh.readAll())
+fh.close()
+webfh.close()]]
+
+function addFile(path)
+	if path ~= "installmaker" then
+		script = script..temp:gsub("fname",path)
+	end
+end
+
+function addDir(path)
+	if path ~= "rom" then
+		script = script.."\n".."fs.makeDir('"..path.."')"
+		for i, v in pairs(fs.list(path)) do
+			if fs.isDir(fs.combine(path,v)) then
+				addDir(fs.combine(path,v))
+			else
+				addFile(fs.combine(path,v))
+			end
+		end
+	end
+end
+
+for i, v in pairs(fs.list("")) do
+	if fs.isDir(v) then
+		addDir(v)
+	else
+		addFile(v)
+	end
+end
+
+local fh = fs.open("install","w")
+fh.write(script)
+fh.close()

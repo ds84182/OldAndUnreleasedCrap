@@ -1,0 +1,11 @@
+function assertRoot()
+	if not os.isRoot(os.getCallingPID()) then error("Operation not permitted") end
+end
+
+local args = {...}
+if args[1] == "update" then
+	assertRoot()
+	print("Updating file list...")
+	os.updateFileList()
+	print("Finished updating file list.")
+end

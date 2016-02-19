@@ -1,0 +1,75 @@
+dofile("LiL")
+
+local BIOS = 
+[[
+	function __inext(tbl, key)
+		key = key + 1
+		if tbl[key] ~= nil then
+			return key, tbl[key]
+		else
+			return nil, nil
+		end
+	end
+
+	function ipairs(tbl)
+		return __inext, tbl, 0
+	end
+
+	function pairs(tbl)
+		return next, tbl, nil
+	end
+]]
+
+local MAIN_CODE = os.version and
+[[
+	local i = 1
+	clear = term.clear
+	while true do
+		clear()
+		term.setCursorPos(1,1)
+		term.write(i.." press any key to increment "..tostring(pairs))
+		os.pullEvent("key")
+		i = i+1
+	end
+]]
+or
+[[
+	print("Hello, World from LiL!")
+	loadstring("print('Loadstring works')")()
+	while true do
+		print("In a loop")
+	end
+]]
+
+--~ local fh = fs.open("ccbios.lua","r")
+--~ MAIN_CODE = fh.readAll()
+--~ fh.close()
+
+local astList = {
+	LiL.parse(LiL.tokenize(BIOS)),
+ 	LiL.parse(LiL.tokenize(MAIN_CODE)),
+}
+
+local int = LiL.interpret(astList)
+local numS = 0
+local ret = {}
+
+while true do
+	local status, err, t = pcall(int.run,unpack(ret))
+	numS = numS+1
+	if status and err == false then break end
+	if not status and type(err) == "table" then
+		error(err[1], ": ", err[2])
+	elseif not status then
+		error(tostring(err))
+	end
+	if os.pullEvent then
+		if t[1] ~= "inst" then
+			ret = {os.pullEvent(unpack(t))}
+			if ret[2] == keys.h then
+				LiL.hibernate(int)
+			end
+		end
+	end
+end
+print("Number of statements run: "..numS)

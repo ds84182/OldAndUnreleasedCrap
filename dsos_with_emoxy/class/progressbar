@@ -1,0 +1,26 @@
+local progressbar = {}
+
+function progressbar.new(x,y,w,p)
+	local self = {}
+	function self.setPosition(nx,ny)
+		x = nx
+		y = ny
+	end
+	function self.setSize(nw)
+		w = nw
+	end
+	function self.setProgress(np)
+		p = np
+	end
+	function self.draw()
+		term.setCursorPos(x,y)
+		term.setBackgroundColor(colors.blue)
+		term.setTextColor(colors.white)
+		local e = math.floor(w*p)
+		for i=1, e do term.write("-") end
+		for i=e+1, w do term.write(" ") end
+	end
+	return self
+end
+
+return progressbar

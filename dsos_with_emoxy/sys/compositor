@@ -1,0 +1,139 @@
+local compositor = {}
+local pipes = {}
+local layers = {}
+local globcursor = true
+local framebuffer = pipe.new(128,128)
+framebuffer.setColor(-1,-1)
+framebuffer.clear()
+
+local function findnext(tab)
+	local i = 1
+	while tab[i] ~= nil do i=i+1 end
+	return i
+end
+
+local function drawPipe(pipe)
+	local ax, ay = pipe[3], pipe[4]
+	local pipe = pipe[1]
+	local w, h  = pipe.getSize()
+	local screen = pipe.getScreenData()
+	local cx, cy = pipe.getCursorPos()
+	local con = pipe.isCursorOn()
+	local tc, bc = pipe.getColor()
+	--Time to optimize!--
+	local t = ""
+	local cf, cb = -1,-1
+	term.setCursorPos(1,1)
+	for y=1, h do
+		for x=1, w do
+			if cf ~= screen.color.f[x][y] or cb ~= screen.color.b[x][y] then
+				if cf ~= -1 or cb ~= -1 then
+					pcall(function() term.setTextColor(cf)
+					term.setBackgroundColor(cb) end)
+					term.write(t)
+				else
+					local tx, ty = term.getCursorPos()
+					term.setCursorPos(tx+#t,ty)
+				end
+				t = ""
+				cf = screen.color.f[x][y]
+				cb = screen.color.b[x][y]
+			end
+			t = t..screen.text[x][y]
+		end
+		if cf ~= -1 or cb ~= -1 then
+			term.setTextColor(cf)
+			term.setBackgroundColor(cb)
+			term.write(t)
+		else
+			local tx, ty = term.getCursorPos()
+			term.setCursorPos(tx+#t,ty)
+		end
+		t = ""
+		cf = -1
+		cb = -1
+		term.setCursorPos(1,y+1)
+	end
+	if globcursor and con then
+		term.setCursorPos(cx+ax,cy+ay)
+		term.setTextColor(tc)
+		term.setBackgroundColor(bc)
+		term.write("_")
+	end
+end
+
+function compositor.add(pipe, layer, x, y)
+	local id = findnext(pipes)
+	pipes[id] = {pipe,layer,x,y}
+	layers[layer] = layers[layer] or {}
+	table.insert(layers[layer], id)
+	return id
+end
+
+function compositor.remove(id)
+	local l = pipes[id][2]
+	pipes[id] = nil
+	for i, v in pairs(layers[l]) do
+		if v == id then
+			table.remove(layers[l],i)
+			break
+		end
+	end
+end
+
+function compositor.framebuffer()
+	--Clear the FrameBuffer--
+	--framebuffer.clear()
+	--Fill The FrameBuffer--
+	local scr = framebuffer.getScreenData()
+	for i, v in pairs(layers) do
+		for n, g in pairs(v) do
+			local pipe = pipes[g]
+			local xpos, ypos = pipe[3], pipe[4]
+			local w, h = pipe[1].getSize()
+			local pipescr = pipe[1].getScreenData()
+			for x=xpos+1, xpos+w do
+				for y=ypos+1, ypos+h do
+					scr.text[x][y] = 
+					pipescr.text[x-xpos][y-ypos]
+					scr.color.b[x][y] = 
+					pipescr.color.b[x-xpos][y-ypos]
+					scr.color.f[x][y] = 
+					pipescr.color.f[x-xpos][y-ypos]
+				end
+			end
+			if globcursor and pipe[1].isCursorOn() then
+				local cx, cy = pipe[1].getCursorPos()
+				local tc, bc = pipe[1].getColor()
+				scr.text[cx+xpos][cy+ypos] = "_"
+				scr.color.f[cx+xpos][cy+ypos] = tc
+				scr.color.b[cx+xpos][cy+ypos] = bc
+			end
+		end
+	end
+end
+
+local function zbuff2pipe()
+	pipe.new(512,512)
+end
+
+function compositor.draw()
+	--term.clear()
+	--[[for i, v in pairs(layers) do
+		for n, g in pairs(v) do
+			--print("PIPE")
+			drawPipe(pipes[g])
+		end
+	end]]
+	compositor.framebuffer()
+	drawPipe({framebuffer,0,0,0})
+end
+
+function compositor.cursorThread()
+	while true do
+		sleep(1/5)
+		globcursor = not globcursor
+	end
+end
+
+return compositor

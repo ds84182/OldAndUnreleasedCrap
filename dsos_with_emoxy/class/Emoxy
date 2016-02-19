@@ -1,0 +1,27 @@
+--[[Emoxy, a scripting language for DSOS]]
+local emoxy = assert(loadfile("sys/emoxycore"))()
+local Emoxy = {}
+function Emoxy.new(code)
+	local self = {}
+	local tokens, hash = emoxy.tokenize(code,"Code")
+	local parsedata = emoxy.parse(tokens,hash)
+	local rf, size = emoxy.interpret(parsedata,getfenv(2))
+	self.runner = rf
+	self.size = size
+	self.at = 1
+	function self.update()
+		self.runner()
+		self.at = self.at+1
+	end
+
+	function self.isRunning()
+		return self.at <= self.size
+	end
+
+	function self.getAt()
+		return self.at
+	end
+	return self
+end
+
+return Emoxy

@@ -1,0 +1,1079 @@
+--Time to start modifing the language to veer away from Lua
+--[[
+The main problem is that:
+1. I use Lua Type Comments. I should use C type instead.
+2. Too much Interop with outside Lua... I even use __add for metatables... That's BAD
+3. I need a way to control the inside enviroment NOT the outside enviroment. Ain't NOBODY want dat.
+4. Also, Local enviroment control would be nice.
+5. Classes. Self-explanitory...
+]]
+local function saveBlockToFile(block, file)
+	--Cheep encoding--
+	local ostr = serialize(block)
+	local fh = fs.open(file,"w")
+	local str = ostr--compress(ostr)
+	--[[
+	for i=1, #str, 8 do
+		for v=0, 7 do
+			if (i+v)%2048 == 0 then print("yield") sleep(0) end
+			fh.write(str:byte(i+v))
+		end
+	end]]
+	fh.write(str)
+	fh.close()
+end
+
+local function loadBlockFromFile(file)
+	local fh = fs.open(file,"r")
+	local s = fh.readAll()--[[""
+	while true do
+		local c = fh.read()
+		if c == nil then break end
+		s = s..string.char(c)
+	end]]
+	--local str = decompress(s)
+	fh.close()
+	return deserialize(s)
+end
+
+local function tokenize(c, locprefix)
+	--local h = hash(c)
+	local tokens = {}
+	
+	locprefix = locprefix or "[string]"
+
+	local pos = 1
+	
+	local line = 1
+	local char = 1
+
+	local lasttok
+	local function accept(regex)
+		--print(regex, " ", pos)
+		--yield()
+		local r = c:match("^"..regex, pos)
+		if r == nil then return false end
+		lasttok = r
+		pos = pos + #lasttok
+		
+		for k=1,#r do
+			if r:sub(k,k) == "\n" then
+				line = line + 1
+				char = 1
+			else
+				char = char + 1
+			end
+		end
+		
+		return true
+	end
+	
+	local function getContext()
+		return {prefix=locprefix, line=line, char=char}
+		--return c:sub(pos-5, pos+5)
+	end
+
+	local keywords = {":","if","else","{","}","func","+","-","*","/","^",">","<","<=",">=","~=","%(","%)","#","true","false","elseif","nil",",","==","=","for","%.%.","%.","%[%[","%]%]","%[","%]","while","return","class","public"}
+	local function tokenise1()
+		accept("[ \r\n\t]+")
+		if accept("/%*") then
+			while not accept("%*/") do
+				accept(".")--if not accept("[^%]]+") then accept(".") end
+			end
+			return tokenise1()
+		end
+		if accept("//[^\n]*\n") then return tokenise1() end
+		if accept("[a-zA-Z_][a-zA-Z_0-9]*") then
+			for k,v in ipairs(keywords) do
+				if lasttok == v then return v end
+			end
+			return "id"
+		end
+		for k,v in ipairs(keywords) do if accept(v) then return lasttok end end
+		if accept("[0-9]+%.[0-9]*") or accept("[0-9]+") then return "num" end
+		if accept("\"") or accept("%[%[") then
+			local s = ""
+			local long = lasttok == "[["
+			local _end = long and "%]%]" or "\""
+			while not accept(_end) do
+				if accept("\\") then
+						if accept("a") then s=s.."\a"
+					elseif accept("b") then s=s.."\b"
+					elseif accept("f") then s=s.."\f"
+					elseif accept("n") then s=s.."\n"
+					elseif accept("r") then s=s.."\r"
+					elseif accept("t") then s=s.."\t"
+					elseif accept("v") then s=s.."\v"
+					elseif accept("\\") then s=s.."\\"
+					elseif accept("\"") then s=s.."\""
+					elseif accept("'") then s=s.."\'"
+					elseif accept("%[") then s=s.."["
+					elseif accept("%]") then s=s.."]"
+					elseif accept("[0-9][0-9][0-9]") or accept("[0-9][0-9]") or accept("[0-9]") then s=s..string.char(tonumber(lasttok))
+					end
+				elseif accept(long and "[^%]\\]+" or "[^\n\"\\]+") then s=s..lasttok
+				else error("unfinished string")
+				end
+			end
+			lasttok = s
+			return "str"
+		end
+		if pos > #c then lasttok="" return "<eof>" end
+		print("Unknown token near "..c:sub(pos,pos))
+		error()
+	end
+	
+	while pos <= #c do
+		local t = tokenise1()
+		if t == nil then --[[print(c:sub(pos,pos+100))]] break end
+		--print(t)
+		table.insert(tokens, {t, lasttok, getContext()})
+	end
+	
+	--TODO: Disk caching this code--
+	--saveTokensToFile(tokens, "cache/tokens/"..h..".tkn")
+	
+	return tokens, h
+end
+
+local function parse(tokens,h)
+	--if fs.exists("cache/code/"..h) then
+		--print("Cache load")
+		--return loadBlockFromFile("cache/code/"..h)
+	--end
+	local ntok = 1
+	local tdata, context = nil, tokens[1][3]
+	local function accept(name)
+		if ntok > #tokens then return false end
+		if tokens[ntok][1] == name then
+			ntok = ntok + 1
+			tdata = tokens[ntok-1][2]
+			context = tokens[ntok-1][3]
+			--print("accepted "..name)
+			return true
+		end
+		return false
+	end
+	
+	local function peek(name)
+		return ntok <= #tokens and tokens[ntok][1] == name
+	end
+	
+	local function expect(name)
+		if not accept(name) then error("expected "..name.." at line "..tokens[ntok][3].line,2) end
+		return tdata
+	end
+	
+	local firstblock, block, stat, exp, explist, prefixexp, var, varlist, args, funcbody, parlist, funcname, field, fieldlist, tableconstructor
+	function block()
+		local r = {}
+		local s
+		expect("{")
+		repeat
+			s = stat()
+			table.insert(r,s)
+		until s == nil
+		expect("}")
+		return r
+	end
+	function firstblock()
+		local r = {}
+		local s
+		repeat
+			s = stat()
+			table.insert(r,s)
+		until s == nil
+		return r
+	end
+	function stat()
+		local nt = ntok
+		do
+			local vl = varlist()
+			if vl ~= nil then
+				expect("=")
+				local al = explist()
+				if al == nil then return nil end
+				return {"=", vl, al, context=context}
+			end
+		end
+		
+		ntok = nt
+		do
+			local fc = prefixexp()
+			if fc ~= nil and (fc[1] == "call") then return fc end
+		end
+		
+		local ctx = context
+		
+		ntok = nt
+		if accept("if") then
+			local r = {"IF"}
+			expect("(")
+			local e = exp()
+			table.insert(r,e)
+			expect(")")
+			local b = block()
+			table.insert(r,b)
+			while accept("elseif") do
+				expect("(")
+				local e = exp()
+				table.insert(r,e)
+				expect(")")
+				local b = block()
+				table.insert(r,b)
+			end
+			local eb
+			if accept("else") then
+				eb = block()
+			end
+			table.insert(r,eb)
+			return r
+		elseif accept("for") then
+			expect("(")
+			expect("id")
+			local id = tdata
+			expect("=")
+			local f = exp()
+			expect(",")
+			local t = exp()
+			expect(")")
+			local b = block()
+			return {"FOR",id,f,t,b}
+		elseif accept("while") then
+			expect("(")
+			local e = exp()
+			expect(")")
+			local b = block()
+			return {"WHILE",e,b}
+		elseif accept("return") then
+			local el = explist()
+			return {"RET",el}
+		elseif accept("func") then
+			local fn = funcname()
+			local fb = funcbody()
+			return {"FUNC", fn, fb, context=ctx}
+		end
+	end
+	function varlist()
+		local l = {}
+		repeat
+			local v = var()
+			if v == nil then
+				return nil
+			end
+			table.insert(l, v)
+		until not accept(",")
+		return l
+	end
+	
+	function var()
+		local nt = ntok
+		local pe = prefixexp()
+		if pe == nil or (pe[1] ~= "[]" and pe[1] ~= "." and pe[1] ~= "var") then
+			ntok = nt
+			return nil
+		end
+		return pe
+	end
+	function explist()
+		local l = {exp()}
+		if l[1] == nil then return {} end
+		while accept(",") do
+			table.insert(l, exp())
+		end
+		return l
+	end
+	
+	local function exp0()
+		if accept("nil") then return {"con", nil, context=context} end
+		if accept("true") then return {"con", true, context=context} end
+		if accept("false") then return {"con", false, context=context} end
+		if accept("num") then return {"con", tonumber(tdata), context=context} end
+		if accept("str") then return {"con", tdata, context=context} end
+		--if accept("...") then return {"...", context=context} end
+		if accept("func") then return {"func", funcbody(), context=context} end
+		if accept("-") then return {"negate", exp0(), context=context} end
+		--if accept("not") then return {"not", exp0(), context=context} end
+		if accept("#") then return {"#", exp0(), context=context} end
+		if peek("{") then return {"tcon", tableconstructor(), context=context} end
+		do
+			local nt = ntok
+			local pe = prefixexp()
+			if pe ~= nil then
+				return pe
+			end
+			ntok = nt
+		end
+		if accept("(") then
+			local e = assert(exp(), "expected expression")
+			expect(")")
+			return e
+		end
+		return nil
+	end
+	
+	local function exp1()
+		local e = exp0()
+		if e == nil then return nil end
+		-- right associative
+		-- {"^", a, {"^", b, {"^", c, d}}}
+		if accept("^") then
+			e = {"^", e, assert(exp0(), "expected expression"), context=context}
+			local last = e
+			while accept("^") do
+				last[3] = {"^", last[3], assert(exp0(), "expected expression"), context=context}
+				last = last[3]
+			end
+		end
+		return e
+	end
+	
+	local function exp1_5()
+		local e = exp1()
+		if e == nil then return nil end
+		while accept("%") do e={"%", e, assert(exp1(), "expected expression"), context=context} end
+		return e
+	end
+	
+	local function exp2()
+		local e = exp1_5()
+		if e == nil then return nil end
+		while accept("/") do e={"/", e, assert(exp1_5(), "expected expression"), context=context} end
+		return e
+	end
+	
+	local function exp3()
+		local e = exp2()
+		if e == nil then return nil end
+		while accept("*") do e={"*", e, assert(exp2(), "expected expression"), context=context} end
+		return e
+	end
+	
+	local function exp4()
+		local e = exp3()
+		if e == nil then return nil end
+		while accept("-") do e={"-", e, assert(exp3(), "expected expression"), context=context} end
+		return e
+	end
+	
+	local function exp5()
+		local e = exp4()
+		if e == nil then return nil end
+		while accept("+") do e={"+", e, assert(exp4(), "expected expression"), context=context} end
+		return e
+	end
+	
+	local function exp6()
+		local e = exp5()
+		if e == nil then return nil end
+		-- right associative
+		-- {"^", a, {"^", b, {"^", c, d}}}
+		if accept("..") then
+			e = {"..", e, assert(exp5(), "expected expression")}
+			local last = e
+			while accept("..") do
+				last[3] = {"..", last[3], assert(exp5(), "expected expression"), context=context}
+				last = last[3]
+			end
+		end
+		return e
+	end
+	
+	local function exp7()
+		local e = exp6()
+		if e == nil then return nil end
+		while accept(">") or accept(">=") or accept("<") or accept("<=") or accept("==") or accept("~=") do
+			e = {tdata, e, assert(exp6(), "expected expression"), context=context}
+		end
+		return e
+	end
+	
+	local function exp8()
+		local e = exp7()
+		if e == nil then return nil end
+		while accept("and") do e={"and", e, assert(exp7(), "expected expression"), context=context} end
+		return e
+	end
+	
+	local function exp9()
+		local e = exp8()
+		if e == nil then return nil end
+		while accept("or") do e={"or", e, assert(exp8(), "expected expression"), context=context} end
+		return e
+	end
+	
+	function exp()
+		return exp9()
+	end
+	
+	function prefixexp()
+		-- prefixexp = Name | prefixexp [ exp ] | prefixexp . Name | prefixexp : Name args | prefixexp args | ( exp )
+		local r
+		if accept("id") then 
+			r = {"var", tdata, context=context}
+		elseif accept("(") then
+			local e = assert(exp(), "expression expected")
+			expect(")")
+			r = {"()", e, context=context}
+		else
+			return nil
+		end
+		while true do
+			if accept(".") then
+				local e = expect("id")
+				r = {".", r, tdata, context=context}
+			elseif accept("[") then
+				local e = assert(exp(), "expression expected")
+				expect("]")
+				r = {"[]", r, e, context=context}
+			elseif peek("(") or peek("{") or peek("str") then
+				local e = args()
+				r = {"call", r, e, context=context}
+			else
+				break
+			end
+		end
+		return r
+	end
+	function args()
+		if peek("{") then return {{"tcons", tableconstructor(), context=context}} end
+		if accept("str") then return {{"con", tdata, context=context}} end
+		expect("(")
+		local el = explist()
+		expect(")")
+		return el
+	end
+	
+	function funcbody()
+		local p, b
+		expect("(")
+		if not accept(")") then
+			p = parlist()
+			expect(")")
+		else
+			p = {}
+		end
+		b = block()
+		return {p, b}
+	end
+	
+	function parlist()
+		local l = {expect("id")}
+		while accept(",") do
+			table.insert(l, expect("id"))
+		end
+		return l
+	end
+	
+	function funcname()
+		expect("id")
+		local n = {".", tdata}
+		while accept(".") do
+			expect("id")
+			table.insert(n, tdata)
+		end
+		return n
+	end
+	
+	function tableconstructor()
+		expect("{")
+		local fl = fieldlist()
+		expect("}")
+		return fl
+	end
+	
+	function fieldlist()
+		local fl = {}
+		while true do
+			local f = field()
+			if f == nil then break end
+			table.insert(fl, f)
+			if not accept(";") and not accept(",") then break end
+		end
+		return fl
+	end
+	
+	function field()
+		if accept("[") then
+			local e = assert(exp(), "expression expected")
+			expect("]")
+			expect("=")
+			return {e, assert(exp(), "expression expected")}
+		end
+		local nt = ntok
+		if accept("id") then
+			local e = {"con", tdata}
+			if accept("=") then
+				return {e, assert(exp(), "expression expected")}
+			else
+				ntok = nt
+			end
+		end
+		local e = exp()
+		if e == nil then return nil end
+		return {"auto", e}
+	end
+	
+	local blk = firstblock()
+	--if not fs.exists("cache/code/"..h) then
+		--saveBlockToFile(blk, "cache/code/"..h)
+	--end
+	
+	return blk
+end
+
+local function interpret(block,func,safe)
+	local ENV = {}
+	local LENV = {}
+	local envstack = {}
+	local proc = 0
+	local rturn
+	local expr, runBlock, getInTable, setInTable, getValue
+	
+	local function glogic(env,name)
+		if type(name) == "string" then
+			return env[name]
+		elseif type(name) == "table" then
+			if name[1] == "." then
+				if #name == 2 then
+					return getValue(name[2])
+				end
+				local t = env[name[2][2]]
+				if t == nil then return end
+				for k=3,#name do
+					t = getInTable(t, {type="string",val=name[k]})
+					if t == nil then return end
+				end
+				return t
+			elseif name[1] == "[]" then
+				return expr(name[2])
+			end
+		end
+	end
+	
+	function getValue(name)
+		local v = glogic(LENV,name)
+		if v == nil then
+			for i,e in pairs(envstack) do
+				v = glogic(e,name)
+				if v ~= nil then return v end
+			end
+			v = glogic(ENV,name)
+		end
+		return v
+	end
+	
+	local function setValueLocal(name,val)
+		LENV[name] = val
+	end
+	
+	local function setValue(name,val)
+		if type(name) == "string" then
+			ENV[name] = val
+		elseif type(name) == "table" then
+			if name[1] == "." then
+				if #name == 2 then
+					return setValue(name[2], val)
+				end
+				local t = ENV[name[2][2]]
+				for k=3,#name-1 do
+					t = getInTable(t, {type="string",val=name[k]})
+				end
+				setInTable(t,name[#name],val)
+			elseif name[1] == "[]" then
+				local tbl = expr(name[2])
+				local key = expr(name[3])
+				--print(key.val, #key.val)
+				setInTable(tbl, key.val, val)
+			end
+		end
+	end
+	
+	function getInTable(tab, name)
+		assert(tab.type == "table", "attempt to index "..tab.type.." value")
+		return tab.val[name.val] or {type="nil"}
+	end
+	
+	function setInTable(tab, name, val)
+		assert(tab.type == "table", "attempt to index "..tab.type.." value")
+		--print(#name.val,name.val)
+		tab.val[name.val] = val
+	end
+	
+	local function pushENV()
+		table.insert(envstack,1,LENV)
+		LENV = {}
+	end
+	
+	local function popENV()
+		LENV = envstack[1]
+		table.remove(envstack,1)
+		if LENV == nil then
+			error("Too much pop")
+		end
+	end
+	
+	local function createVar(type, val)
+		return {type=type, val=val}
+	end
+	
+	local at = ""
+	
+	local function patch(v)
+		if type(v) == "function" then
+			return createVar("luafunc",v)
+		elseif type(v) == "table" then
+			local t = {}
+			for r,g in pairs(v) do
+				if tostring(r):sub(1,1) ~= "_" and g ~= v and not (tostring(g):sub(1,5) == "class" and type(g) == "table") then
+					--sleep(1/20)
+					local oat = at
+					at = at.."."..r
+					--print(at)
+					t[r] = patch(g)
+					at = oat
+				end
+			end
+			--print("!out!")
+			return createVar("table",t)
+		else
+			return createVar(type(v),v)
+		end
+	end
+	
+	for i,v in pairs(func) do
+		if tostring(i):sub(1,1) ~= "_"and not (tostring(v):sub(1,5) == "class" and type(v) == "table")  then
+			--sleep(1/20)
+			at = i
+			--print(at)
+			ENV[i] = patch(v)
+		end
+	end
+	
+	if ENV.table then
+		--Patch the table lib--
+		ENV["table"].val["insert"] = createVar("luafunc",function (t,p,v)
+			if v == nil then
+				table.insert(t,createVar(type(p),p))
+			else
+				table.insert(t,p,createVar(type(v),v))
+			end
+		end)
+	end
+	
+	if not safe then
+		ENV["lualoadfile"] = ENV["loadfile"]
+		ENV["lualoadstring"] = ENV["loadstring"]
+	end
+	
+	ENV["loadfile"] = createVar("luafunc", function(fil)
+		local fh = fs.open(fil,"r")
+		local code = fh.readAll()
+		fh.close()
+		return createVar("func",runBlock(parse(tokenize(code))))
+	end)
+	
+	ENV["loadstring"] = createVar("luafunc", function(code)
+		return createVar("func",runBlock(parse(tokenize(code))))
+	end)
+	
+	ENV["safe"] = createVar("boolean", safe)
+	
+	local function isTrue(val)
+		val = val or {}
+		return val.val == true
+	end
+	
+	local function logicalNot(e)
+		return {type="boolean", val=not isTrue(e)}
+	end
+	
+	local function callfunc(val,args)
+		if val.type == "luafunc" then
+			local ctypes = {"number","string"}
+			local nargs = {}
+			for i, v in pairs(args) do
+				nargs[i] = v.val
+				if v.val == "func" then
+					nargs[i] = function(...)
+						local nargs = {}
+						local args = {...}
+						for i,v in pairs(args) do
+							nargs[i] = patch(v)
+						end
+						callfunc(v.val, nargs)
+					end
+				end
+			end
+			local ret = {val.val(unpack(nargs))}
+			for i, v in pairs(ret) do
+				if type(ret) == "table" and ret.type then
+				else
+				ret[i] = patch(v)
+				end
+			end
+			return unpack(ret)
+		elseif val.type == "func" then
+			local b = val.val.block
+			local par = val.val.par
+			pushENV()
+			for i,v in pairs(par) do
+				setValueLocal(v,args[i])
+			end
+			runBlock(b)
+			local ret = {}
+			if rturn ~= nil then
+				for i,v in pairs(rturn) do
+					ret[i] = v
+				end
+				rturn = nil
+			end
+			popENV()
+			return unpack(ret)
+		end
+	end
+	
+	local function explist(l)
+		local r = {}
+		if l == nil then error({"interp","table expected, got nil"},2) end
+		for k,v in ipairs(l) do
+			local t = {expr(v)}
+			for e, g in pairs(t) do
+				table.insert(r, g)
+			end
+		end
+		return r
+	end
+	
+	local function makeArithFunction(direct, meta)
+		return function(t)
+			local a = expr(t[2])
+			local b = expr(t[3])
+			if (a.type == "string" or a.type == "number") and (b.type == "string" or b.type == "number") then
+				return {type="number", val=direct(a.val,b.val)}
+			end
+			--[[local mm = getbinhandler(a, b, meta)
+			return mm and callfunc(mm, {a, b}) or ]]
+			error({"lua", "attempt to "..meta.." "..a.type.." with "..b.type})
+		end
+	end
+	
+	expr = {
+		tcon = function(t)
+			local r = {}
+			local rv = {type="table", val=r}
+			local auto = 1
+			for k,v in ipairs(t[2]) do
+				if v[1] == "auto" then
+					v2 = expr(v[2])
+					if v2 ~= nil and v2.type ~= "nil" then
+						r[auto] = v2
+						auto = auto + 1
+					end
+				else
+					-- name=value or [expr]=value
+					local k2 = expr(v[1])
+					r[k2.val] = expr(v[2])
+				end
+			end
+			return rv
+		end,
+		con = function(t)
+			--print(tostring(t[2]))
+			return {type=type(t[2]), val=t[2]}
+		end,
+		quote = function(t) -- never generated by the parser
+			return t[2]
+		end,
+		["[]"] = function(t)
+			local t2 = expr(t[2])
+			local i = expr(t[3])
+			local rv = getInTable(t2, i)
+			return rv
+		end,
+		["."] = function(t)
+			local t2 = expr(t[2])
+			local rv = getInTable(t2, {type="string",val=t[3]})
+			return rv
+		end,
+		var = function(t)
+			return getValue(t[2]) or {type="nil"}
+		end,
+		call = function(t)
+			local fn = expr(t[2])
+			local args = explist(t[3])
+			local rv = {callfunc(fn, args)}
+			if #rv > 0 then
+				return unpack(rv)
+			else
+				return {type="nil"}
+			end
+		end,
+		["=="] = function(t)
+			local a = expr(t[2])
+			local b = expr(t[3])
+			local rv = false
+			if a == b then
+				--print("a and b equal!")
+				rv=true
+			elseif a.type ~= b.type then
+				rv=false
+			elseif a.val == b.val then
+				--print("Vals equal!")
+				rv=true
+			end
+			return {type="boolean",val=rv}
+		end,
+		["<="] = function(t)
+			local a = expr(t[2])
+			local b = expr(t[3])
+			if a.type == "number" and b.type == "number" then
+				return {type="boolean", val=(a.val <= b.val)}
+			elseif a.type == "string" and b.type == "string" then
+				return {type="boolean", val=(a.val <= b.val)}
+			end
+		end,
+		["<"] = function(t)
+			return logicalNot(expr({"<=", t[3], t[2]}))
+		end,
+		[">="] = function(t)
+			return expr({"<=", t[3], t[2]})
+		end,
+		[">"] = function(t)
+			return expr({"<", t[3], t[2]})
+		end,
+		["~="] = function(t)
+			return expr({"not", {"==", t[2], t[3]}})
+		end,
+		["not"] = function(t)
+			local a = expr(t[2])
+			return {type="boolean", val=not isTrue(a)}
+		end,
+		["and"] = function(t)
+			local a = expr(t[2])
+			if not isTrue(a) then
+				return a
+			else
+				local b = expr(t[3])
+				return b
+			end
+		end,
+		["or"] = function(t)
+			local a = expr(t[2])
+			if isTrue(a) then
+				return a
+			else
+				local b = expr(t[3])
+				return b
+			end
+		end,
+		[".."] = function(t)
+			local a = expr(t[2])
+			local b = expr(t[3])
+			if (a.type == "string" or a.type == "number") and (b.type == "string" or b.type == "number") then
+				return {type="string", val=tostring(a.val)..tostring(b.val)}
+			end
+			local mm = getbinhandler(a, b, "__concat")
+			return mm and callfunc(mm, {a, b}) or error({"lua", "attempt to concatenate "..a.type.." with "..b.type})
+		end,
+		["+"] = makeArithFunction(function(a,b) return a+b end, "__add"),
+		["-"] = makeArithFunction(function(a,b) return a-b end, "__sub"),
+		["*"] = makeArithFunction(function(a,b) return a*b end, "__mul"),
+		["^"] = makeArithFunction(function(a,b) return a^b end, "__pow"),
+		["/"] = makeArithFunction(function(a,b) return a/b end, "__div"),
+		["%"] = makeArithFunction(function(a,b) return a%b end, "__mod"),
+		negate = function(t)
+			local a = expr(t[2])
+			if a.type == "number" then
+				return {type="number",val=-a.val}
+			end
+		end,
+		["#"] = function(t)
+			local e = expr(t[2])
+			if e.type == "string" then
+				return {type="number", val=#e.val}
+			elseif e.type == "table" then
+				local default = #e.val
+				return {type="number",val=default}
+			else
+				error({"lua", "attempt to get length of "..e.type})
+			end
+		end,
+		["()"] = function(t)
+			return expr(t[2])
+		end,
+		--[[func = function(t)
+			return funcdef(t[2])
+		end]]--[[,
+		["..."] = function()
+			if #scope.dotdotdot == 0 then return {type="nil"} end
+			return unpack(scope.dotdotdot)
+		end]]
+	}
+	setmetatable(expr, {__call = function(t, a)
+		--scope.context = a.context or scope.context
+		local et = a[1]
+		assert(type(et) == "string", "expected string, got "..type(et), 2)
+		--print(et)
+		local f = t[et]
+		if f == nil then error("unimplemented expression type: " .. et) end
+		--log("begin "..et)
+		local rv = {f(a)}
+		--log("end "..et)
+		--yield()
+		assert(#rv > 0, "Expression type " .. et .. " returned no values")
+		for k,v in ipairs(rv) do
+			if type(v) ~= "table" then
+				print("Expression type " .. et .. " returned " .. type(v) .. " value")
+				error()
+			end
+		end
+		return unpack(rv)
+	end})
+	
+	local function runCode(v)
+		if v[1] == "IF" then
+			for k = 2, #v-1, 2 do
+				--print(k)
+				local test = expr(v[k])
+				--print(test.type, " ", tostring(test.val))
+				if isTrue(test) then
+					pushENV()
+					runBlock(v[k+1])
+					popENV()
+					return
+				end
+			end
+			if ((#v)%2) == 0 then
+				pushENV()
+				runBlock(v[#v])
+				popENV()
+			end
+			--[[if isTrue(expr(v[2])) then
+				print("if is true")
+				runBlock(v[3])
+			end]]
+		elseif v[1] == "call" then
+			local fn = v[2]
+			fn = expr(fn)
+			local args = explist(v[3])
+			if fn.type == "function" then
+				--print("Missnamed function!")
+				fn.type = "luafunc"
+			else
+				--print(fn.type)
+			end
+			callfunc(fn,args)
+		elseif v[1] == "=" then
+			local vlist = {}
+			for r, g in pairs(v[2]) do
+				if g[1] == "var" then
+					table.insert(vlist,g[2])
+				elseif g[1] == "." then
+					table.insert(vlist,{"tableaccess",g[2],{type=g[3],val=g[3]}})
+				elseif g[1] == "[]" then
+					table.insert(vlist,{"tableaccess",g[2],expr(g[3])})
+				else
+					table.insert(vlist,expr(g))
+				end
+			end
+			for r, g in pairs(explist(v[3])) do
+				vlist[r] = {vlist[r],g}
+			end
+			for i,v in pairs(vlist) do
+				--print(v[1], v[2].type)
+				if v[1][1] == "tableaccess" then
+					setInTable(expr(v[1][2]),v[1][3],v[2])
+				else
+					setValue(v[1],v[2])
+				end
+			end
+		elseif v[1] == "FOR" then
+			local id = v[2]
+			local f = expr(v[3])
+			local t = expr(v[4])
+			local b = v[5]
+			local c = 1
+			if f.val > t.val then c = -1 end
+			for r=f.val,t.val,c do
+				pushENV()
+				setValueLocal(id,createVar("number",r))
+				runBlock(b)
+				popENV()
+			end
+		elseif v[1] == "WHILE" then
+			local e = v[2]
+			local b = v[3]
+			while isTrue(expr(e)) do
+				pushENV()
+				runBlock(b)
+				popENV()
+			end
+		elseif v[1] == "RET" then
+			rturn = explist(v[2])
+		elseif v[1] == "FUNC" then
+			local name = v[2][2]
+			local plist = v[3][1]
+			local block = v[3][2]
+			--print("Made function "..name)
+			setValue(name, createVar("func",{par=plist,block=block}))
+		end
+	end
+	
+	function runBlock(block)
+		--print("Block Run")
+		for i,v in pairs(block) do
+			if proc%512 == 0 then sleep(0) end
+			runCode(v)
+			if rturn then
+				break
+			end
+			proc = proc+1
+		end
+	end
+	
+	local at = 1
+	
+	return function()
+		if block[at] ~= nil then
+			local v = block[at]
+			--if proc%256 == 0 then sleep(0) end
+			runCode(v)
+			proc = proc+1
+			at = at+1
+			return at
+		end
+		print(proc)
+	end, #block, ENV
+end
+
+--[[interpret(parse(tokenize(
+term.clear()
+term.setCursorPos(1,1)
+func singbeer(times)
+{
+	for (beer=times,1)
+	{
+		print(beer.." bottles of beer on the wall, "..beer.." bottles of beer!")
+		--sleep(4)
+		print("Take one down, pass it around, "..(beer-1).." bottles of beer on the wall!")
+		--sleep(4)
+	}
+}
+singbeer(2)
+tab = {hello="Hello"}
+tab.world = "World"
+tab["exclam"] = "!"
+print(tab.hello, tab.world, tab["exclam"])
+,"test")),{print=print,sleep=sleep,term=term})]]
+--return {tokenize = tokenize, parse = parse, interpret = interpret}
+--sleep(50)
+
+local args = {...}
+if args[1] then
+	local fh = fs.open(args[1],"r")
+	local code = fh.readAll()
+	fh.close()
+	local func = interpret(parse(tokenize(code)),getfenv()._G)
+	while func() do end
+end

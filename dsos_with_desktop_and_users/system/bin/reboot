@@ -1,0 +1,5 @@
+if not os.isRoot(os.getCallingPID()) then
+	printError("Needs root")
+	error()
+end
+os.reboot()

@@ -1,0 +1,63 @@
+//This is a new scripting language
+//Something to note: Classes can be overridden, and classes are made in interpretation, not preprocessor, so if a class is defined after some code, it will error
+//You can make a Class unoveriddable.
+//Also when overriding classes, methods not overriden from the class stay EG:
+/*
+class Class
+{
+	function foo()
+	{
+		print("foo")
+	}
+	function bar()
+	{
+		print("bar")
+	}
+}
+c = Class.new()
+print(c.foo())
+print(c.bar())
+class Class
+{
+	function foo()
+	{
+		print("bar")
+	}
+}
+//Cool thing to note, this will change all the instances of class Class
+print(c.foo())
+print(c.bar())
+Output:
+foo
+bar
+bar
+bar
+
+class final Class
+{
+	function foo()
+	{
+		print("foo")
+	}
+	function bar()
+	{
+		print("bar")
+	}
+}
+c = Class.new()
+print(c.foo())
+print(c.bar())
+//Will error saying that class is final
+class Class
+{
+	function foo()
+	{
+		print("bar")
+	}
+}
+
+*/
+//Class reflection
+/*
+LX has class reflection. It is a powerful tool and can be used to change methods
+*/

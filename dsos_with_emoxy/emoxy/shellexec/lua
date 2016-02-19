@@ -1,0 +1,4 @@
+function = lualoadfile(fs.combine(dir,cmd[2]))
+table.remove(cmd,1)
+table.remove(cmd,1)
+function(unpack(cmd))

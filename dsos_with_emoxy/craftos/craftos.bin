@@ -1,0 +1,197 @@
+-- Install lua parts of the os api
+function os.version()
+	return "CraftOS 1.4"
+end
+
+function os.pullEventRaw( _sFilter )
+	return coroutine.yield( _sFilter )
+end
+
+function os.pullEvent( _sFilter )
+	local event, p1, p2, p3, p4, p5 = os.pullEventRaw( _sFilter )
+	if event == "terminate" then
+		printError( "Terminated" )
+		error()
+	end
+	return event, p1, p2, p3, p4, p5
+end
+
+function printError( ... )
+	term.setTextColor( colors.red )
+	print( ... )
+	term.setTextColor( colors.white )
+end
+
+-- Install the rest of the OS api
+function os.run( _tEnv, _sPath, ... )
+    local tArgs = { ... }
+    local fnFile, err = loadfile( _sPath )
+    if fnFile then
+        local tEnv = _tEnv
+        --setmetatable( tEnv, { __index = function(t,k) return _G[k] end } )
+		setmetatable( tEnv, { __index = _G } )
+        setfenv( fnFile, tEnv )
+        local ok, err = pcall( function()
+        	fnFile( unpack( tArgs ) )
+        end )
+        if not ok then
+        	if err and err ~= "" then
+	        	printError( err )
+	        end
+        	return false
+        end
+        return true
+    end
+    if err and err ~= "" then
+		printError( err )
+	end
+    return false
+end
+
+local nativegetmetatable = getmetatable
+local nativetype = type
+local nativeerror = error
+function getmetatable( _t )
+	if nativetype( _t ) == "string" then
+		nativeerror( "Attempt to access string metatable", 2 )
+		return nil
+	end
+	return nativegetmetatable( _t )
+end
+
+local tAPIsLoading = {}
+function os.loadAPI( _sPath )
+	local sName = fs.getName( _sPath )
+	if tAPIsLoading[sName] == true then
+		printError( "API "..sName.." is already being loaded" )
+		return false
+	end
+	tAPIsLoading[sName] = true
+	local env = getfenv(2)
+	local tEnv = {}
+	setmetatable( tEnv, { __index = env } )
+	local fnAPI, err = loadfile( _sPath )
+	if fnAPI then
+		setfenv( fnAPI, tEnv )
+		fnAPI()
+	else
+		printError( err )
+        tAPIsLoading[sName] = nil
+		return false
+	end
+	
+	local tAPI = {}
+	for k,v in pairs( tEnv ) do
+		tAPI[k] =  v
+	end
+	--env[sName] = nil
+	_G[sName] = tAPI
+	tAPIsLoading[sName] = nil
+	return true
+end
+
+function os.unloadAPI( _sName )
+	if _sName ~= "_G" and type(_G[_sName]) == "table" then
+		_G[_sName] = nil
+	end
+end
+
+function os.sleep( _nTime )
+	sleep( _nTime )
+end
+
+local nativeShutdown = os.shutdown
+function os.shutdown()
+	nativeShutdown()
+	while true do
+		coroutine.yield()
+	end
+end
+
+-- Install the lua part of the HTTP api (if enabled)
+if http then
+	local function wrapRequest( _url, _post )
+		local requestID = http.request( _url, _post )
+		while true do
+			local event, param1, param2 = os.pullEvent()
+			if event == "http_success" and param1 == _url then
+				return param2
+			elseif event == "http_failure" and param1 == _url then
+				return nil
+			end
+		end		
+	end
+	
+	http.get = function( _url )
+		return wrapRequest( _url, nil )
+	end
+
+	http.post = function( _url, _post )
+		return wrapRequest( _url, _post or "" )
+	end
+end
+
+-- Install the lua part of the peripheral api
+peripheral.wrap = function( _sSide )
+	if peripheral.isPresent( _sSide ) then
+		local tMethods = peripheral.getMethods( _sSide )
+		local tResult = {}
+		for n,sMethod in ipairs( tMethods ) do
+			tResult[sMethod] = function( ... )
+				return peripheral.call( _sSide, sMethod, ... )
+			end
+		end
+		return tResult
+	end
+	return nil
+end
+			
+-- Load APIs
+local tApis = fs.list( "craftos/apis" )
+for n,sFile in ipairs( tApis ) do
+	if string.sub( sFile, 1, 1 ) ~= "." then
+		local sPath = fs.combine( "craftos/apis", sFile )
+		if not fs.isDir( sPath ) then
+			if sFile ~= "term" then
+				os.loadAPI( sPath )
+			end
+		end
+	end
+end
+
+if turtle then
+	local tApis = fs.list( "craftos/apis/turtle" )
+	for n,sFile in ipairs( tApis ) do
+		if string.sub( sFile, 1, 1 ) ~= "." then
+			local sPath = fs.combine( "craftos/apis/turtle", sFile )
+			if not fs.isDir( sPath ) then
+				os.loadAPI( sPath )
+			end
+		end
+	end
+end
+
+-- Run the shell
+local ok, err = pcall( function()
+	parallel.waitForAny(
+		function()
+			rednet.run()
+		end,
+		function()
+			os.run( {}, "craftos/programs/shell" )
+		end
+	)
+end )
+
+-- If the shell errored, let the user read it.
+if not ok then
+	printError( err )
+end
+
+pcall( function()
+	term.setCursorBlink( false )
+	print( "Press any key to continue" )
+	os.pullEvent( "key" ) 
+end )
+os.shutdown()
+

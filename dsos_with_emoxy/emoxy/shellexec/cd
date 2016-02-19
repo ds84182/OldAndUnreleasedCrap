@@ -1,0 +1,8 @@
+if (fs.exists(fs.combine(dir,cmd[2])))
+{
+	dir = fs.combine(dir,cmd[2])
+}
+else
+{
+	printError("Directory doesn't exist!")
+}

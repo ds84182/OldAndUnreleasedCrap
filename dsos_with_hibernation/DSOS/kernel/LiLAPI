@@ -1,0 +1,14 @@
+LiL Library
+
+LiL.tokenize(code[,prefix])
+Turns code into a table of elements. Takes an optional stringprefix.
+
+LiL.parse(tokens)
+Takes tokens produced by LiL.tokenize and returns an Abstract Syntax Tree.
+
+LiL.createInterpreter(ast,progressStackInfo,hscope)
+Takes the Abstract Syntax Tree produced by LiL.parse and returns a function that will execute one line of code from the lua code.
+When given progressStackInfo and hscope, it will ignore the ast and load the tables.
+
+LiL.hibernate(interpFunc,dir)
+Returns a string of the state of the interpreter.

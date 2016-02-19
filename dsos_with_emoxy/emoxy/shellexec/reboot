@@ -1,0 +1,8 @@
+write("Rebooting")
+for (i=1,3)
+{
+	sleep(0.4)
+	write(".")
+}
+sleep(0.8)
+os.reboot()

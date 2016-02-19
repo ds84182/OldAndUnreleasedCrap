@@ -1,0 +1,6 @@
+print("DSOS shell 0.1")
+print("(c) DSWare inawesomerated")
+while true do
+	write(">")
+	local cmd = read()
+end

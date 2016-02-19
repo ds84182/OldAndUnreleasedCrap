@@ -1,0 +1,13 @@
+local apt,e = loadstring(os.readAllOfResource("aptapi"))
+if not apt then error(e) end
+apt = apt()
+local args = {...}
+if args[1] == "list" then
+	for i,v in pairs(apt.list()) do
+		print(v)
+	end
+elseif args[1] == "install" then
+	apt.install(args[2])
+else
+	print("Unknown option "..args[1])
+end

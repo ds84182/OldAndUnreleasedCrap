@@ -1,0 +1,9 @@
+func clearCodeCache()
+{
+	fs.delete("cache/code")
+	fs.makeDir("cache/code")
+}
+
+print("Clearing code cache")
+clearCodeCache()
+print("Cache clear success!")

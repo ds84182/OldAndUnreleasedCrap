@@ -1,0 +1,1 @@
+print("Code Cache: "..(getDirectorySize("cache/code")/1024).."kb")

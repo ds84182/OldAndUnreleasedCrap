@@ -1,0 +1,25 @@
+tab = fs.list(dir)
+if (#tab > 0)
+{
+	for (i=1,#tab)
+	{
+		x, y = term.getCursorPos()
+		if (i>17)
+		{
+			term.setCursorPos(1,19)
+			term.write("Press any key to continue")
+			os.pullEvent("key")
+			term.setCursorPos(1,19)
+			term.clearLine()
+		}
+		if (fs.isDir(fs.combine(dir,tab[i])))
+		{
+			term.setTextColor(16)
+		}
+		else
+		{
+			term.setTextColor(1)
+		}
+		print(tab[i])
+	}
+}

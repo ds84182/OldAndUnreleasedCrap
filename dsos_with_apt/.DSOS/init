@@ -1,0 +1,781 @@
+do
+	function table.newReadOnlyTable(t)
+		--It also gives you a handy disabler :)
+		local disabled = {false}
+		local proxy = {}
+		local mt = {       -- create metatable
+			__index = t,
+			__newindex = function (t,k,v)
+				--Do nothing. /troll
+				if disabled[1] then
+					t[k] = v
+				end
+			end}
+		setmetatable(proxy, mt)
+		return proxy, disabled
+    end
+	function table.newProtectedTable(tab,protect)
+		--This will protect the items specified by protect
+		--It also gives you a handy disabler :)
+		local disabled = {false}
+		local proxy = {}
+		local mt = {       -- create metatable
+			__index = tab,
+			__newindex = function (t,k,v)
+				if t == tab then
+					if not protect[k] or disabled[1]  then
+						rawset(t,k,v)
+					end
+				else
+					rawset(t,k,v)
+				end
+			end}
+		setmetatable(proxy, mt)
+		return proxy, disabled
+	end
+end
+
+local log = {}
+do
+	local fh = fs.open("dsos.log","w")
+	function log.add(t)
+		fh.writeLine(t)
+		fh.flush()
+	end
+end
+
+local tasker = {}
+do
+	local sch = {}
+	local nullsch = {}
+	local proc = {}
+	function tasker.addTask(func,args,id,programdir)
+		os.queueEvent("proc_start")
+		if not id then
+			id = math.random(1,2^16)
+			while proc[id] do
+				id = math.random(1,2^16)
+			end
+		end
+		local perms = {}
+		local env = {}
+		local p = {}
+		if id == 0 and proc[0] == nil then
+			perms={root=true,permaroot=true}
+		end
+		setmetatable(env,{__index = _G})
+		env.procinfo = {id = id}
+		local procinfo = env.procinfo
+		local disabler
+		local disablerPerms
+		procinfo.perms, disablerPerms = table.newReadOnlyTable(perms)
+		env, disabler = table.newProtectedTable(env,{procinfo=true,os=true})
+		setfenv(func,env)
+		p.func = func
+		p.perms = perms
+		p.id = id
+		p.env = env
+		p.disablers = {disabler,disablerPerms}
+		p.coro = coroutine.create(func)
+		p.args = args or {}
+		p.filter = nil
+		p.dir = programdir or ""
+		table.insert(nullsch,id)
+		proc[id] = p
+		return p
+	end
+	function tasker.findTaskFromFunction(func)
+		for i, v in pairs(proc) do
+			if v.func == func then
+				return v
+			end
+		end
+	end
+	function tasker.getTaskFromPID(id)
+		return proc[id]
+	end
+	function tasker.getProcesses()
+		return proc
+	end
+	function tasker.kill(pid)
+		proc[pid] = nil
+	end
+	function tasker.run(event)
+		local nh = nullsch
+		nullsch = {}
+		local sh = sch[event[1]] or {}
+		sch[event[1]] = {}
+		for i, v in pairs(nh) do
+			local p = proc[v]
+			if p then
+				if coroutine.status(p.coro) ~= "dead" then
+					local s, e
+					if p.args then
+						s,e = coroutine.resume(p.coro,unpack(p.args))
+						p.args = nil
+					else
+						s,e = coroutine.resume(p.coro,unpack(event))
+					end
+					if s then
+						if e then
+							sch[e] = sch[e] or {}
+							table.insert(sch[e],v)
+							p.filter = e
+						else
+							table.insert(nullsch,v)
+							p.filter = nil
+						end
+					else
+						--TODO: Store errors in a error log--
+						proc[v] = nil
+						os.queueEvent("proc_end",v,true)
+						os.queueEvent("proc_err",v,e)
+						log.add(e)
+					end
+				end
+				if coroutine.status(p.coro) == "dead" then
+					--Coroutine died.--
+					proc[v] = nil
+					os.queueEvent("proc_end",v,false)
+					if v == 0 then
+						error("[KP] Root Process died")
+					end
+				end
+			end
+		end
+		for i, v in pairs(sh) do
+			local p = proc[v]
+			if p then
+				if coroutine.status(p.coro) ~= "dead" then
+					local s, e = coroutine.resume(p.coro,unpack(event))
+					if s then
+						if e then
+							sch[e] = sch[e] or {}
+							table.insert(sch[e],v)
+							p.filter = e
+						else
+							table.insert(nullsch,v)
+							p.filter = nil
+						end
+					else
+						--TODO: Store errors in a error log--
+						proc[v] = nil
+						os.queueEvent("proc_end",v,true)
+						os.queueEvent("proc_err",v,e)
+						log.add(e)
+					end
+				end
+				if coroutine.status(p.coro) == "dead" then
+					--Coroutine died.--
+					proc[v] = nil
+					os.queueEvent("proc_end",v,false)
+					if v == 0 then
+						error("[KP] Root Process died")
+					end
+				end
+			end
+		end
+	end
+end
+
+local fsbind = {}
+
+do
+	local oldfs = {}
+	for i, v in pairs(fs) do
+		oldfs[i] = v
+	end
+	function fsbind.new(dir)
+		local fs = {}
+		--fs overrides to run everything from .DSOS--
+		local function formPath(p)
+			return oldfs.combine("",dir).."/"..oldfs.combine("",p)
+		end
+		function fs.open(path,mode)
+			return oldfs.open(formPath(path),mode)
+		end
+		function fs.move(p1,p2)
+			return oldfs.move(formPath(p1),formPath(p2))
+		end
+		function fs.copy(p1,p2)
+			return oldfs.copy(formPath(p1),formPath(p2))
+		end
+		function fs.delete(p1)
+			return oldfs.delete(formPath(p1))
+		end
+		function fs.makeDir(p1)
+			return oldfs.makeDir(formPath(p1))
+		end
+		function fs.exists(p1)
+			return oldfs.exists(formPath(p1))
+		end
+		function fs.list(p1)
+			return oldfs.list(formPath(p1))
+		end
+		function fs.isDir(p1)
+			return oldfs.isDir(formPath(p1))
+		end
+		fs.getName = oldfs.getName
+		fs.combine = oldfs.combine
+		return fs
+	end
+end
+
+local mount = {}
+do
+	local vfs = {dirname = "",mount = nil,child = {}}
+	local vfsfiles = {}
+	local mounts = {}
+	--Mount api. This needs mount handlers--
+	--The real fs is a mount handler--
+	local function split(str, pat)
+		local t = {}  -- NOTE: use {n = 0} in Lua-5.0
+		local fpat = "(.-)" .. pat
+		local last_end = 1
+		local s, e, cap = str:find(fpat, 1)
+		while s do
+			if s ~= 1 or cap ~= "" then
+				table.insert(t,cap)
+			end
+			last_end = e+1
+			s, e, cap = str:find(fpat, last_end)
+		end
+		if last_end <= #str then
+			cap = str:sub(last_end)
+			table.insert(t, cap)
+		end
+		return t
+	end
+	local function updateInFS(mount,name,dir,out,mountrel)
+		out[name] = {dir = true, name = name, fulldir = dir, content = {}, mountrel = mountrel, mount = mount}
+		out = out[name].content
+		local list = mount.mount.list(mountrel)
+		for i, v in pairs(list) do
+			if mount.mount.isDir(fs.combine(mountrel,v)) then
+				print("Updating "..fs.combine(dir,v))
+				updateInFS(mount,v,fs.combine(dir,v),out,fs.combine(mountrel,v))
+			else
+				print("Updating file "..fs.combine(dir,v))
+				out[v] = {file = true,name = v,fulldir = fs.combine(dir,v), mountrel = fs.combine(mountrel,v), mount = mount}
+			end
+		end
+	end
+	local function updateFileListImpl(dir,mount,out)
+		local list = mount.mount.list("")
+		for i, v in pairs(list) do
+			if mount.mount.isDir(v) then
+				print("Updating "..fs.combine(dir,v))
+				updateInFS(mount,v,fs.combine(dir,v),out,v)
+				print("f")
+			else
+				out[v] = {file = true,name = v,fulldir = fs.combine(dir,v), mountrel = v, mount = mount}
+			end
+		end
+		for i, v in pairs(mount.child) do
+			if not out[v.dirname] then
+				out[v.dirname] = {dir = true,name = v.dirname, fulldir = fs.combine(dir,v.dirname), mountrel = v, content = {}, mount = mount}
+			end
+			print("Updating mount "..fs.combine(dir,v.dirname))
+			updateFileListImpl(fs.combine(dir,v.dirname),v,out[v.dirname].content)
+		end
+	end
+	function mount.updateFileList()
+		vfsfiles = {dir = true,name = "",fulldir = "",content = {},mount = vfs}
+		print("Updating /")
+		updateFileListImpl("",vfs,vfsfiles.content)
+	end
+	function mount.add(mounthandler,mountname,mountdir)
+		local pathsplit = split(mountdir,"/")
+		local parentPath = vfs
+		for i, v in pairs(pathsplit) do
+			if not parentPath.child[v] then
+				parentPath.child[v] = {dirname = v, mount = nil, child = {}}
+			end
+			parentPath = parentPath.child[v]
+		end
+		local mountpath
+		if mountname == "" then
+			mountpath = parentPath
+		else
+			parentPath.child[mountname] = {}
+			mountpath = parentPath.child[mountname]
+		end
+		mountpath.dirname = mountname
+		mountpath.mount = mounthandler
+		mountpath.child = mountpath.child or {}
+		mounts[fs.combine(mountdir,mountname)] = mountpath
+		mount.updateFileList()
+	end
+	function mount.getMounts()
+		return mounts
+	end
+	
+	local function getDir(dir,spath)
+		local path = spath
+		local pathsplit = split(dir,"/")
+		for i, v in pairs(pathsplit) do
+			if v ~= "" then
+				if not path.content[v] then
+					error("Cannot find directory")
+				end
+				path = path.content[v]
+				if path.file then
+					error("Cannot find directory")
+				end
+			end
+		end
+		return path
+	end
+	
+	local function getFile(dir,spath)
+		local path = spath
+		local pathsplit = split(dir,"/")
+		for i, v in pairs(pathsplit) do
+			if v ~= "" then
+				if not path.content[v] then
+					error("Cannot find file")
+				end
+				path = path.content[v]
+			end
+		end
+		if path.dir then
+			error("Cannot find file "..dir)
+		end
+		return path
+	end
+	
+	local function getFileOrCreate(dir,spath)
+		local path = spath
+		local pathsplit = split(dir,"/")
+		for i, v in pairs(pathsplit) do
+			if v ~= "" then
+				if not path.content[v] and i == #pathsplit then
+					--Just make a new file
+					path.content[v] = {file = true,name = v,fulldir = fs.combine(path.fulldir,v), mountrel = fs.combine(path.mountrel,v), mount = path.mount}
+					path.mount.mount.open(path.content[v].mountrel,"w").close()
+				end
+				if not path.content[v] then
+					error("Cannot find file")
+				end
+				path = path.content[v]
+			end
+		end
+		if path.dir then
+			error("Cannot find file "..dir)
+		end
+		return path
+	end
+	
+	local function getPath(dir,spath)
+		local path = spath
+		local pathsplit = split(dir,"/")
+		for i, v in pairs(pathsplit) do
+			if v ~= "" then
+				if not path.content[v] then
+					error("Cannot find file or directory")
+				end
+				path = path.content[v]
+			end
+		end
+		return path
+	end
+	
+	function mount.makeDir(dir)
+		local path = vfsfiles
+		local pathsplit = split(dir,"/")
+		for i, v in pairs(pathsplit) do
+			if v ~= "" then
+				if not path.content[v] then
+					path.content[v] = {dir = true, name = v, fulldir = fs.combine(path.fulldir,v), content = {}, mountrel = fs.combine(path.mountrel,v), mount = path.mount}
+					path.mount.mount.makeDir(path.content[v].mountrel)
+				end
+				path = path.content[v]
+				if path.file then
+					error("Cannot make directory")
+				end
+			end
+		end
+		return path
+	end
+	
+	function mount.list(dir)
+		local path = getDir(dir,vfsfiles)
+		local list = {}
+		for i,v in pairs(path.content) do
+			table.insert(list,v.name)
+		end
+		return list
+	end
+	
+	function mount.open(file,mode)
+		local file = (mode == "w" and getFileOrCreate or getFile)(file,vfsfiles)
+		return file.mount.mount.open(file.mountrel,mode)
+	end
+	
+	function mount.exists(p)
+		local s = pcall(function () getPath(p,vfsfiles) end)
+		return s
+	end
+	
+	function mount.isDir(p)
+		local f = getPath(p,vfsfiles)
+		return f.dir
+	end
+end
+
+mount.add(fsbind.new(".DSOS"),"","")
+mount.add(fsbind.new("rom"),"rom","")
+for i, v in pairs(mount.list("")) do
+	print(v)
+end
+
+local oldfs = {}
+for i, v in pairs(fs) do
+	oldfs[i] = v
+end
+
+do
+	for i, v in pairs(oldfs) do
+		rawset(fs,i,mount[i])
+		print(i)
+	end
+	fs.combine = oldfs.combine
+	fs.getName = oldfs.getName
+end
+
+do
+	--Installing std DSOS functions
+	
+	local function isRoot(pid,func)
+		local task = tasker.getTaskFromPID(pid)
+		if not task then
+			return false
+		else
+			return task.perms.root or task.perms["root_"..(func or "")] or false
+		end
+	end
+	
+	local function getCallingPID()
+		local at = 2
+		while true do
+			local f = setfenv(at,getfenv(at))
+			local task = tasker.findTaskFromFunction(f)
+			if task then
+				return task.id
+			end
+			at = at+1
+		end
+	end
+	
+	function os.isRoot(pid)
+		return isRoot(pid)
+	end
+	
+	function os.getCallingPID()
+		return getCallingPID()
+	end
+	
+	function os.setPerms(pid,perms)
+		if isRoot(getCallingPID(),"setperms") then
+			--If calling process is not permaroot then unset permaroot
+			--Set perms
+			local above = tasker.getTaskFromPID(getCallingPID())
+			local task = tasker.getTaskFromPID(pid)
+			for i, v in pairs(perms) do
+				task.perms[i] = v
+				if i == "permaroot" and v then
+					if task.perms.permaroot and not above.perms.permaroot then
+						task.perms.permaroot = false
+					end
+				end
+			end
+		end
+	end
+	
+	function os.getPerms(pid)
+		local task = tasker.getTaskFromPID(pid)
+		local ret = {}
+		for i,v in pairs(task.perms) do
+			ret[i] = v
+		end
+		return ret
+	end
+	
+	function os.run(program,args)
+		--This will inherit the calling programs permisions, except permaroot. The program has to set that itself.
+		local f, e = loadfile(program)
+		local task = tasker.addTask(f,args, nil, fs.combine(program,".."))
+		local above = tasker.getTaskFromPID(getCallingPID())
+		for i, v in pairs(above.perms) do
+			task.perms[i] = v
+		end
+		task.perms.permaroot = false
+		return task.id
+	end
+	
+	function os.getOldFS()
+		if isRoot(getCallingPID(),"nativefs") then
+			return oldfs
+		else
+			return fs -- /troll
+		end
+	end
+	
+	function os.getAllProcesses()
+		local p = tasker.getProcesses()
+		local ret = {}
+		for i, v in pairs(p) do
+			ret[i] = true
+		end
+		return ret
+	end
+	
+	function os.updateFileList()
+		if isRoot(getCallingPID(),"fsupdate") then
+			mount.updateFileList()
+		end
+	end
+	
+	function os.killProcess(pid)
+		if isRoot(getCallingPID(),"task_kill") or isRoot(getCallingPID(),"task") then
+			tasker.kill(pid)
+		end
+	end
+	
+	function os.doesProcessExist(pid)
+		return tasker.getTaskFromPID(pid) ~= nil
+	end
+	
+	local oldreboot = os.reboot
+	function os.reboot()
+		if isRoot(getCallingPID(),"power") then
+			oldreboot()
+		end
+	end
+	local oldshutdown = os.shutdown
+	function os.shutdown()
+		if isRoot(getCallingPID(),"power") then
+			oldshutdown()
+		end
+	end
+	function os.getResource(res)
+		local task = tasker.getTaskFromPID(getCallingPID())
+		local dir = fs.combine(task.dir,res)
+		return fs.open(dir,"r")
+	end
+	function os.readAllOfResource(res)
+		local fh = os.getResource(res)
+		local ret = fh.readAll()
+		fh.close()
+		return ret
+	end
+	function os.importLib(lib)
+		local fh = fs.open("/lib/lib"..lib,"r")
+		local code = fh.readAll()
+		fh.close()
+		_G[lib] = loadstring(code)()
+	end
+	function os.getTasker()
+		if isRoot(getCallingPID(),"task") then
+			return tasker
+		end
+	end
+end
+
+pipe = {}
+do
+	--Pipez n Shiz, were playin Mario!--
+	local pipes = {}
+	local pat = 1
+	function pipe.new(w,h,color) --Creates a new pipe
+		local pid = pat
+		pat = pat+1
+		local p = {}
+		local cursor = {1,1,colors.white,colors.black}
+		local textData = {}
+		local fgData = {}
+		local bgData = {}
+		for x = 1, w do
+			textData[x] = {}
+			fgData[x] = {}
+			bgData[x] = {}
+			for y = 1, h do
+				textData[x][y] = " "
+				fgData[x][y] = -1
+				bgData[x][y] = -1
+			end
+		end
+		p.textData = textData
+		p.fgData = fgData
+		p.bgData = bgData
+		p.cursor = cursor
+		p.w = w
+		p.h = h
+		pipes[pid] = p
+		return pid
+	end
+	function pipe.getAPI(pid) --Gets the ComputerCraft standard term api that maps out to the pipe
+		local term = {}
+		local p = pipes[pid]
+		function term.setCursorPos(x,y)
+			p.cursor[1] = x
+			p.cursor[2] = y
+		end
+		function term.getCursorPos()
+			return p.cursor[1], p.cursor[2]
+		end
+		function term.write(t)
+			for i=1, #t do
+				if p.cursor[1]<=p.w then
+					p.textData[p.cursor[1]][p.cursor[2]] = t:sub(i,i)
+					p.fgData[p.cursor[1]][p.cursor[2]] = p.cursor[3]
+					p.bgData[p.cursor[1]][p.cursor[2]] = p.cursor[4]
+				end
+				p.cursor[1] = p.cursor[1]+1
+			end
+		end
+		function term.setCursorBlink(b)
+		
+		end
+		function term.getSize()
+			return p.w, p.h
+		end
+		function term.setTextColor(f)
+			--Comming soon: Color checks
+			p.cursor[3] = f
+		end
+		function term.setBackgroundColor(f)
+			--Comming soon: Color checks
+			p.cursor[4] = f
+		end
+		term.setTextColour = term.setTextColor
+		term.setBackgroundColour = term.setBackgroundColor
+		function term.scroll(n)
+			for i=1, n do
+				for y=2, p.h do
+					for x=1, p.w do
+						p.textData[x][y-1] = p.textData[x][y]
+						p.fgData[x][y-1] = p.fgData[x][y]
+						p.bgData[x][y-1] = p.bgData[x][y]
+					end
+				end
+				for x=1, p.w do
+					p.textData[x][p.h] = " "
+					p.fgData[x][p.h] = p.cursor[3]
+					p.bgData[x][p.h] = p.cursor[4]
+				end
+			end
+		end
+		function term.clearLine()
+			if p.cursor[2]<=p.h then
+				for x=1, p.w do
+					p.textData[x][p.cursor[2]] = " "
+					p.fgData[x][p.cursor[2]] = p.cursor[3]
+					p.bgData[x][p.cursor[2]] = p.cursor[4]
+				end
+			end
+		end
+		function term.clear()
+			for x=1, p.w do
+				for y=1, p.h do
+					p.textData[x][y] = " "
+					p.fgData[x][y] = p.cursor[3]
+					p.bgData[x][y] = p.cursor[4]
+				end
+			end
+		end
+		function term.isColor()
+			return true
+		end
+		term.isColour = term.isColor
+		return term
+	end
+	function pipe.render(pid,dx,dy)
+		dx = dx or 1
+		dy = dy or 1
+		dy = dy-1
+		local p = pipes[pid]
+		for y=1, p.h do
+			local t = ""
+			local fc = -1
+			local bc = -1
+			term.setCursorPos(dx,y+dy)
+			for x=1, p.w do
+				if p.fgData[x][y] ~= fc or p.bgData[x][y] ~= bc then
+					if fc ~= -1 then
+						term.setTextColor(fc)
+					end
+					if bc ~= -1 then
+						term.setBackgroundColor(bc)
+					end
+					term.write(t)
+					fc = p.fgData[x][y]
+					bc = p.bgData[x][y]
+					t = ""
+				end
+				t = t..p.textData[x][y]
+			end
+			if fc ~= -1 then
+				term.setTextColor(fc)
+			end
+			if bc ~= -1 then
+				term.setBackgroundColor(bc)
+			end
+			term.write(t)
+		end
+	end
+end
+
+do
+	--Lets unload all the CraftOS SHITPIs. (loljk)
+	local unload = {
+		"gps",
+		"help",
+		"parallel",
+		"rednet",
+		"vector",
+		"shell"
+	}
+	for i, v in pairs(unload) do
+		_G[v] = nil
+		print("Sucessfully unloaded API "..v)
+	end
+end
+
+loadfile("enviromentVars")()
+
+local function proc0()
+	if not os.isRoot(os.getCallingPID()) then
+		error("Process 0 lacks Root Permision")
+	end
+	if fs.exists("autostart-root") then
+		print("Autostart root")
+		local fh = fs.open("autostart-root","r")
+		local line = fh.readLine()
+		while line do
+			print("bin/"..line.."/program")
+			loadfile("bin/"..line.."/program")()
+			line = fh.readLine()
+		end
+		fh.close()
+	end
+	--[[if fs.exists("autostart-background-root") then
+		print("Autostart background root")
+		local fh = fs.open("autostart-background-root","r")
+		local line = fh.readLine()
+		while line do
+			loadfile("bin/"..line)()
+			line = fh.readLine()
+		end
+		fh.close()
+	end]]
+	local f,e = loadfile("bin/shell/program")
+	if not f then print(e) end
+	f()
+	os.pullEvent("key")
+end
+print("Started proc0")
+tasker.addTask(proc0,nil,0)
+while true do
+	tasker.run({os.pullEvent()})
+end

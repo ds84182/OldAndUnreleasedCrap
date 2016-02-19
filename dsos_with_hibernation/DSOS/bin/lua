@@ -1,0 +1,27 @@
+print("Realtime lua input")
+
+local loop = true
+
+function exit()
+	loop = false
+end
+
+while loop do
+	write("> ")
+	local line = read()
+	local f, e
+	f, e = loadstring(line,"lua")
+	--[[do
+		local tf, te = loadstring("return "..line,"lua")
+		if tf then f = tf end
+	end]]
+	if not f then
+		print(e)
+	else
+		print(f())
+	end
+end
+
+exit = nil
+
+print("Exiting lua...")

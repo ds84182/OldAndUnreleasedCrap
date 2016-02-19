@@ -1,0 +1,144 @@
+local pipe = {}
+
+function pipe.new(w,h)
+	local self = {}
+	local screen = {text={},color={b={},f={}}}
+	for x=1, w do
+		screen.text[x] = {}
+		screen.color.b[x] = {}
+		screen.color.f[x] = {}
+		for y=1, h do
+			screen.text[x][y] = " "
+			screen.color.b[x][y] = colors.black
+			screen.color.f[x][y] = colors.white
+		end
+	end
+	local cx, cy = 1, 1
+	local con = false
+	local cfg, cbg = colors.white, colors.black
+	function self.getScreenData()
+		return screen
+	end
+	
+	function self.isCursorOn()
+		return con
+	end
+	
+	function self.getCursorPos()
+		return cx, cy
+	end
+	
+	function self.getSize()
+		return w, h
+	end
+	
+	function self.getColor()
+		return cfg, cbg
+	end
+	
+	function self.setColor(fg,bg)
+		cfg = fg
+		cbg = bg
+	end
+	
+	function self.clear()
+		for x=1, w do
+			for y=1, h do
+				screen.text[x][y] = " "
+				screen.color.b[x][y] = cbg
+				screen.color.f[x][y] = cfg
+			end
+		end
+	end
+	
+	function self.getTermAPI()
+		local isCol = term.isColor()
+		local term = {}
+		function term.clear()
+			for x=1, w do
+				for y=1, h do
+					screen.text[x][y] = " "
+					screen.color.b[x][y] = cbg
+					screen.color.f[x][y] = cfg
+				end
+			end
+		end
+		
+		function term.clearLine()
+			for x=1, w do
+				screen.text[x][cy] = " "
+				screen.color.b[x][cy] = cbg
+				screen.color.f[x][cy] = cfg
+			end
+		end
+		
+		function term.write(str)
+			for i=1, #str do
+				if screen.text[cx] then
+					screen.text[cx][cy] = str:sub(i,i)
+					screen.color.b[cx][cy] = cbg
+					screen.color.f[cx][cy] = cfg
+				end
+				cx = cx+1
+			end
+		end
+		
+		function term.setTextColor(col)
+			cfg = col
+		end
+		
+		function term.setBackgroundColor(col)
+			cbg = col
+		end
+		
+		function term.setCursorBlink(b)
+			con = b == true
+		end
+		
+		function term.setCursorPos(x,y)
+			assert(type(x) == "number" and type(y) == "number", "Expected number, number")
+			cx = x
+			cy = y
+		end
+		
+		function term.getCursorPos()
+			return cx, cy
+		end
+		
+		function term.getSize()
+			return w, h
+		end
+		
+		function term.isColor()
+			return true
+		end
+		
+		term.isColour = term.isColor
+		
+		term.setTextColour = term.setTextColor
+		
+		term.setBackgroundColour = term.setBackgroundColor
+		
+		function term.scroll(n)
+			for i=1, n do
+				for x=1, w do
+					for y=2, h do
+						screen.text[x][y-1] = screen.text[x][y]
+						screen.color.b[x][y-1] = screen.color.b[x][y]
+						screen.color.f[x][y-1] = screen.color.f[x][y]
+					end
+				end
+				local rcy = cy
+				cy = h
+				term.clearLine()
+				cy = rcy
+			end
+		end
+		term.lol = "lol"
+		return term
+	end
+	
+	return self
+end
+
+return pipe

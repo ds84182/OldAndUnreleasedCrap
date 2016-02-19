@@ -1,0 +1,5 @@
+local f,e = loadfile(".DSOS/init")
+if not f then
+	error(e)
+end
+f()

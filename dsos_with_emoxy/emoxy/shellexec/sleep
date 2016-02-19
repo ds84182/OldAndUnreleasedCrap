@@ -1,0 +1,3 @@
+n = tonumber(cmd[2])
+print("Sleeping for "..n)
+sleep(n)

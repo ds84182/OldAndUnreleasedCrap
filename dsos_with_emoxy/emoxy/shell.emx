@@ -1,0 +1,105 @@
+dir = ""
+func clearscr()
+{
+	term.setBackgroundColor(32768)
+	term.clear()
+	term.setCursorPos(1,1)
+}
+func version()
+{
+	return "DSOS Emoxy Shell 0.0.3"
+}
+func readCMD()
+{
+	term.setTextColor(16)
+	write(dir.."> ")
+	term.setTextColor(1)
+	return read()
+}
+func split(str, pat)
+{
+	tab = {}
+	cstr = ""
+	for (a=1,string.len(str))
+	{
+		char = string.sub(str,a,a)
+		if (char ~= pat)
+		{
+			cstr = cstr..char
+		}
+		else
+		{
+			--print("Inserting "..cstr)
+			table.insert(tab, cstr)
+			cstr = ""
+		}
+	}
+	--print("Inserting "..cstr)
+	table.insert(tab, cstr)
+	return tab
+}
+func getDirectorySize(dir)
+{
+	tab = fs.list(dir)
+	siz = 0
+	if (#tab > 0)
+	{
+		for (i=1,#tab)
+		{
+			siz = siz+fs.getSize(fs.combine(dir,tab[i]))
+		}
+	}
+	return siz
+}
+func printError(err)
+{
+	term.setTextColor(16384)
+	print(err)
+	term.setTextColor(1)
+}
+func parseCommand(cmd)
+{
+	if (fs.exists("/emoxy/shellexec/"..cmd[1]))
+	{
+		loadfile("/emoxy/shellexec/"..cmd[1])()
+	}
+	elseif (fs.exists(fs.combine(dir,cmd[1])))
+	{
+		loadfile(fs.combine(dir,cmd[1]))()
+	}
+}
+func runCmdList(file)
+{
+	fh = fs.open(file,"r")
+	con = true
+	while (con)
+	{
+		get = fh.readLine()
+		if (get == nil)
+		{
+			con = false
+		}
+		else
+		{
+			parseCommand(split(get," "))
+		}
+	}
+	fh.close()
+}
+clearscr()
+term.setTextColor(16)
+print(version())
+if (safe)
+{
+	term.setTextColor(16384)
+	print("SAFE MODE")
+}
+term.setTextColor(1)
+if (fs.exists("emoxy/run"))
+{
+	runCmdList("emoxy/run")
+}
+while (true)
+{
+	parseCommand(split(readCMD()," "))
+}

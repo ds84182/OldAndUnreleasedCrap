@@ -1,0 +1,5 @@
+local targs = {...}
+local a = os.clock()
+shell.run(unpack(targs))
+local b = os.clock()
+print("Time: "..(b-a))

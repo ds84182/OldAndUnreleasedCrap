@@ -1,0 +1,70 @@
+--Load standard functions--
+local fh = fs.open("sys/stdfunc","r")
+assert(loadstring(fh.readAll()))()
+fh.close()
+
+function checkCompat()
+	if turtle then
+		term.write("DSOS is not available on turtles!")
+		coroutine.yield("key")
+		fs.move("os.lst","os.lst_OLD")
+		os.reboot()
+	end
+	if not term.isColor() then
+		term.write("Please upgrade this computer to an Advanced Computer!")
+		coroutine.yield("key")
+		fs.move("os.lst","os.lst_OLD")
+		os.reboot()
+	end
+end
+
+local function copy(tab)
+	local r = {}
+	for i, v in pairs(tab) do
+		if type(v) == "table" then
+			if v ~= tab then
+				r[i] = copy(v)
+				if getmetatable(v) then
+					setmetatable(r[i], getmetatable(v))
+				end
+			end
+		else
+			r[i] = v
+		end
+	end
+	return r
+end
+
+checkCompat()
+dofile("sys/serial")
+dofile("sys/compress")
+hash = dofile("sys/hash")
+local env = getfenv()
+for i,v in pairs(fs.list("class")) do
+	env[v] = dofile("class/"..v)
+end
+local compositor = dofile("sys/compositor")
+local tasker = multitask.new()
+local proc = process.new(env, tasker, task, pipe, compositor)
+function os.getProcessManager()
+	return copy(proc)
+end
+--[[proc.create(function()
+	local fh = fs.open("emoxy/shell.emx","r")
+	local str = fh.readAll()
+	fh.close()
+	local emx = Emoxy.new(str)
+	while true do
+		sleep(0)
+		emx.update()
+	end
+end)]]
+proc.create(loadfile("sys/ui"))
+proc.createBackground(compositor.cursorThread)
+
+while true do
+	tasker.update()
+	--print("Comp draw")
+	compositor.draw()
+	tasker.setEvent({os.pullEvent()})
+end

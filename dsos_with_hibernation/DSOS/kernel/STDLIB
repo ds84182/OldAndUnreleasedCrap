@@ -1,0 +1,318 @@
+env.math = {
+	huge = {type="number",val=math.huge},
+	pi = {type="number",val=math.pi},
+}
+
+for k,v in ipairs({"abs", "acos", "asin", "atan", "atan2", "ceil", "cos", "cosh", "deg", "exp", "floor", "fmod", "frexp", "ldexp", "log", "log10", "max", "min", "modf", "pow", "rad", "random", "randomseed", "sin", "sinh", "sqrt", "tanh", "tan"}) do
+	env.math[v] = ret.wrapFunc(math[v])
+end
+
+env.string = {
+	byte = ret.wrapFunc(string.byte),
+	char = ret.wrapFunc(string.char),
+	find = ret.wrapFunc(string.find),
+	format = ret.wrapFunc(string.format),
+	len = ret.wrapFunc(string.len),
+	lower = ret.wrapFunc(string.lower),
+	match = ret.wrapFunc(string.match),
+	rep = ret.wrapFunc(string.rep),
+	reverse = ret.wrapFunc(string.reverse),
+	sub = ret.wrapFunc(string.sub),
+	upper = ret.wrapFunc(string.upper),
+	
+	gmatch = function(str, ptn)
+		str = ret.checkType(str, "string")
+		ptn = ret.checkType(ptn, "string")
+		local f, s, v = string.gmatch(str, ptn)
+		return {type="function", val=function()
+			v = f(s, v)
+			return ret.wrapObj(v)
+		end}
+	end,
+	
+	-- todo: gsub
+}
+
+env.os = {
+	--TODO: Fix this
+}
+
+env.coroutine = {
+	yield = function(...)
+		local oss = scopeStack
+		local input = {...}
+		local inp = {}
+		for i,v in pairs(input) do
+			inp[i] = ret.unwrapObj(v)
+			--print(inp[i],"LAL")
+		end
+		local rv = {coroutine.yield(unpack(inp))}
+		scopeStack = oss
+		if #rv == 0 then return {type="nil"} end
+		local nv = {}
+		for i, v in pairs(rv) do
+			nv[i] = ret.wrapObj(v)
+			--print(nv[i], "LEL")
+		end
+		return unpack(nv)
+	end,
+	create = function(fn)
+		local cr_scopeStack = {scope}
+		local cr = coroutine.create(function(...)
+			scopeStack = cr_scopeStack
+			local rv = {pcall(callfunc, fn, ...)}
+			if table.remove(rv, 1) then
+				-- no error
+				return unpack(rv)
+			end
+			-- error
+			local err = rv[1]
+			if type(err) ~= "table" or err[1] ~= "lua" then
+				if type(err) == "table" then
+					print("Internal error in coroutine: "..err.location..err[2])
+				else
+					print("Internal error in coroutine: "..tostring(err))
+				end
+				error(err, 0)
+			end
+			print("Lua coroutine error: "..err.location..err[2])
+			error(err, 0)
+		end)
+		return {type="thread", val={cr=cr, scopeStack=cr_scopeStack}}
+	end,
+	wrap = function (c)
+		local coro = env.coroutine.create(c)
+		return ret.wrapObj(function(...)
+			return env.coroutine.resume(coro,...)
+		end)
+	end,
+	resume = function(c, ...)
+		local oss = scopeStack
+		local input = {...}
+		local inp = {}
+		for i,v in pairs(input) do
+			--print(inp[i])
+			inp[i] = ret.unwrapObj(v)
+		end
+		local rv = {coroutine.resume(ret.checkType(c, "thread").cr, unpack(inp))}
+		scopeStack = oss
+		local nv = {}
+		for i, v in pairs(rv) do
+			--print(rv[i])
+			nv[i] = ret.wrapObj(v)
+		end
+		return unpack(nv)
+	end,
+	status = function(c)
+		return ret.wrapObj(coroutine.status(ret.checkType(c, "thread").cr))
+	end,
+}
+
+env.table = {}
+
+function env.loadstring(str, prefix)
+	str = ret.checkType(str, "string")
+	prefix = ret.checkType(prefix, "string", true) or "[string]"
+	local ok, tokens, ast = pcall(LiL.tokenize, str, prefix)
+	if not ok then return {type="nil"}, ret.wrapObj(tokens) end
+	ok, ast = pcall(LiL.parse, tokens)
+	if not ok then return {type="nil"}, ret.wrapObj(ast) end
+	
+	return ret.funcdef({{"..."},ast})
+end
+
+function env.error(message, level)
+	message = ret.checkType(message, "string")
+	level = ret.checkType(level, "number", true) or 1
+	if level == 0 then
+		error({"lua", message}, 0)
+	else
+		local sc = ret.getStackLevel(level)
+		error({"lua", sc.context.prefix..":"..sc.context.line..": "..message}, 0)
+	end
+end
+
+function env.rawequal(a, b)
+	if a == nil or b == nil then return a == b end
+	return a.type == b.type and a.val == b.val
+end
+
+function env.rawget(tbl, key)
+	return ret.interp_rawget(tbl or {type="nil"}, key or {type="nil"})
+end
+
+function env.rawset(tbl, key, value)
+	ret.interp_rawset(tbl or {type="nil"}, key or {type="nil"}, value or {type="nil"})
+	return {type="nil"}
+end
+
+function env.select(...)
+	local args = {...}
+	local n = args[1]
+	if n == nil then error{"lua", "expected at least one argument"} end
+	if n.type == "string" and n.val == "#" then
+		return {type="number", val=(#args-1)}
+	end
+	n = ret.checkType(n, "number")
+	return args[n+1] or {type="nil"}
+end
+
+function env.setfenv(fn, tbl)
+	if fn == nil then fn = {type="nil"} end
+	ret.checkType(tbl, "table")
+	if fn.type == "number" then
+		local scope = ret.getStackLevel(fn.val)
+		scope.fn.val.scope.env = tbl
+	else
+		ret.checkType(fn, "function")
+		fn.val.scope.env = tbl
+	end
+	return fn
+end
+
+function env.getfenv(fn)
+	if fn == nil then fn = {type="nil"} end
+	if fn.type == "number" then
+		local scope = ret.getStackLevel(fn.val)
+		return scope.fn.scope.env
+	elseif fn.type == "nil" then
+		return ret.scopeStack[#ret.scopeStack].env
+	else
+		ret.checkType(fn, "function")
+		return fn.val.scope.env
+	end
+end
+
+function env.setmetatable(tbl, meta)
+	tbl = tbl or {type="nil"}
+	if tbl.type ~= "table" then
+		error{"lua", "cannot set metatable of "..tbl.type.." value"}
+	end
+	if meta and meta.type == "nil" then meta = nil end
+	tbl.metatable = meta
+	return {type="nil"}
+end
+
+function env.getmetatable(tbl)
+	return tbl.metatable or {type="nil"}
+end
+
+function env.unpack(tbl, start)
+	ret.checkType(tbl, "table")
+	start = ret.checkType(start, "number", true)
+	if #tbl.val.number < (start or 1) then return {type="nil"} end
+	return unpack(tbl.val.number, start or 1)
+end
+
+function env.xpcall(...)
+	error("todo xpcall")
+end
+
+function env.pcall(fn, ...)
+	local rv = {pcall(ret.callfunc, fn, {...})}
+	local ok = rv[1]
+	if ok then
+		rv[1] = ret.wrapObj(rv[1])
+		return unpack(rv)
+	else
+		return {type="boolean", val=false}, {type="string", val=rv[2]}
+	end
+end
+
+--[[
+rednet = TODO ??????
+coroutine = TODO NATIVE
+status = status
+resume = resume
+create = create
+yield = yield
+wrap = wrap
+running = running
+string
+gsub = TODO NATIVE
+]]
+
+function env.tonumber(a)
+	if a == nil or a.type ~= "string" then return ret.wrapObj(nil) end
+	return ret.wrapObj(tonumber(a.val))
+end
+
+function env.tostring(a)
+	if a == nil or a.type == "nil" then return ret.wrapObj("nil") end
+	local rv = ret.callmetamethod(a, "__tostring", {a}, ret.wrapObj(tostring(a.val)))
+	return rv
+end
+
+function env.print(...)
+	local s = ""
+	for k,v in ipairs({...}) do
+		s = s..tostring(v.val)
+	end
+	ret.log(s)
+	return ret.wrapObj(print(s))
+end
+
+function env.table.insert(tbl, pos, val)
+	if tbl == nil then error({"lua", "expected table, got nil"}) end
+	if tbl.type ~= "table" then error({"lua", "expected table, got "..tbl.type}) end
+	if val ~= nil then
+		if pos.type ~= "number" then
+			error({"lua", "expected number, got "..pos.type})
+		end
+		pos = ret.unwrapObj(pos)
+	else
+		val, pos = pos, nil
+	end
+	tbl.val.number = tbl.val.number or {}
+	table.insert(tbl.val.number, val)
+	return {type="nil"}
+end
+
+function env.table.remove(tbl, pos)
+	pos = ret.checkType(pos, "number", true) or #tbl.val.number
+	ret.checkType(tbl, "table")
+	table.remove(tbl.val.number, pos)
+	return {type="nil"}
+end
+
+function env.assert(a,b)
+	if not a then
+		error(b or "assertion failed!",2)
+	end
+	return a
+end
+
+function env.next(tbl, key)
+	if tbl == nil then tbl = {type="nil"} end
+	if key == nil then key = {type="nil"} end
+	if tbl.type == nil then error({"interp", "corrupt table"}, 2) end
+	if tbl.type ~= "table" then error({"lua", "table expected, got "..tbl.type}) end
+	if key.type == "nil" then
+		for k,v in pairs(tbl.val) do
+			for k2,v2 in pairs(v) do
+				return {type=k,val=k2}, v2
+			end
+		end
+		return {type="nil"}
+	end
+	if tbl.val[key.type] == nil then error({"lua", "invalid key to next"}) end
+	
+	-- try next key of the same type
+	local r = next(tbl.val[key.type], key.val)
+	if r ~= nil then
+		return {type=key.type,val=r}, tbl.val[key.type][r]
+	end
+	
+	-- try next type
+	local nt = next(tbl.val, key.type)
+	if nt == nil then return {type="nil"},{type="nil"} end
+	
+	-- get first key of next type, or nil if none left
+	local r = next(tbl.val[nt])
+	if r == nil then return {type="nil"},{type="nil"} end
+	return {type=nt, val=r}
+end
+
+function env.type(o)
+	return {type="string", val=(o and o.type or "nil")}
+end

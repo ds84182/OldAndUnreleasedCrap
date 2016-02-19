@@ -1,0 +1,49 @@
+Window = {}
+
+function Window.new()
+	local wind = {}
+	local x = 0
+	local y = 0
+	local w = 128
+	local h = 144/2
+	local content = {}
+	function wind.draw(gpu)
+		gpu.filledRectangle(128,128,255,x,y,w+4,h+18)
+		if not font then
+			error("Window UI needs libfont!")
+		end
+		font.draw(gpu,x+20,y+4,fonts.Minecraft,"New Window")
+		gpu.filledRectangle(255,255,255,x+2,y+16,w,h)
+		for i, v in pairs(content) do
+			if v.draw then
+				v.draw(gpu,x+2,y+16)
+			end
+		end
+	end
+	function wind.addControl(c)
+		table.insert(content,c)
+	end
+	function wind.getPosition()
+		return x, y
+	end
+	
+	function wind.setPosition(nx,ny)
+		x,y = nx,ny
+	end
+	function wind.getSize()
+		return w, h
+	end
+	
+	function wind.setSize(nw,nh)
+		--We set the positions of the content so that they are porportional to their old position
+		local sx,sy = nw/w,nh/h
+		for i, v in pairs(content) do
+			local x,y = v.getPosition()
+			x = x*sx
+			y = y*sy
+			v.setPosition(x,y)
+		end
+		w,h = nw,nh
+	end
+	return wind
+end

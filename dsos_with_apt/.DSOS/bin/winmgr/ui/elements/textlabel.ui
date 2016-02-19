@@ -1,0 +1,22 @@
+TextLabel = {}
+
+function TextLabel.new()
+	local textlabel = {}
+	local text = "Hello, World!"
+	local x = 0
+	local y = 0
+	
+	function textlabel.draw(gpu,px,py)
+		font.draw(gpu,px+x,py+y,fonts.Minecraft,text,{0,0,0})
+	end
+	
+	function textlabel.getPosition()
+		return x, y
+	end
+	
+	function textlabel.setPosition(nx,ny)
+		x,y = nx,ny
+	end
+	
+	return textlabel
+end

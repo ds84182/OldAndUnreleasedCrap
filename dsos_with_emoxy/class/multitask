@@ -1,0 +1,100 @@
+local MultiTask = {}
+
+local function findnext(tab)
+	local i = 1
+	while tab[i] ~= nil do i=i+1 end
+	return i
+end
+
+function MultiTask.new()
+	local self = {}
+	self.process = {}
+	self.sch = {}
+	self.nullsch = {}
+	self.event = ""
+	self.eventargs = {}
+	function self.addProcess(task)
+		local pid = findnext(self.process)
+		task.setPID(pid)
+		self.process[pid] = task
+		self.nullsch[pid] = task
+		return pid
+	end
+
+	function self.killProcess(pid)
+		local task = self.process[pid]
+		local cfilter = task.getFilter()
+		if cfilter ~= nil then
+			self.sch[cfilter][pid] = nil
+		else
+			self.nullsch[pid] = nil
+		end
+		self.process[pid] = nil
+	end
+
+	function self.setEvent(e)
+		self.event = e[1]
+		table.remove(e,1)
+		self.eventargs = e
+	end
+
+	function self.update()
+		local function error(s)
+			print(s)
+			sleep(300)
+		end
+		local tmp = self.nullsch
+		self.nullsch = {}
+		for i, v in pairs(tmp) do
+			local task = v
+			if task.isAlive() then
+				task.update({self.event,unpack(self.eventargs)})
+				if task.isAlive() then
+					local event = task.getFilter()
+					if event == nil then
+						self.nullsch[i] = v
+					else
+						self.sch[event] = self.sch[event] or {}
+						self.sch[event][i] = v
+					end
+				else
+					task.death()
+					if task.isError() then
+						error(task.getError())
+					end
+				end
+			else
+				task.death()
+			end
+		end
+		if self.sch[self.event] ~= nil then
+			local tmp = self.sch[self.event]
+			self.sch[self.event] = {}
+			for i, v in pairs(tmp) do
+				local task = v
+				if task.isAlive() then
+					task.update({self.event,unpack(self.eventargs)})
+					if task.isAlive() then
+						local event = task.getFilter()
+						if event == nil then
+							self.nullsch[i] = v
+						else
+							self.sch[event] = self.sch[event] or {}
+							self.sch[event][i] = v
+						end
+					else
+						task.death()
+						if task.isError() then
+							error(task.getError())
+						end
+					end
+				else
+					task.death()
+				end
+			end
+		end
+	end
+	return self
+end
+
+return MultiTask

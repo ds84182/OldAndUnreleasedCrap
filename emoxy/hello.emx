@@ -1,0 +1,42 @@
+//Whopping time of 0.45
+print("Hello, World!")
+func singbeer(times)
+{
+	for (beer=times,1)
+	{
+		print(beer.." bottles of beer on the wall, "..beer.." bottles of beer!")
+		//sleep(4)
+		print("Take one down, pass it around, "..(beer-1).." bottles of beer on the wall!")
+		//sleep(4)
+	}
+	return "Finish!"
+}
+//print(singbeer(99))
+tab = {hello="Hello"}
+tab.world = "World"
+tab["exclam"] = "!"
+print(tab.hello, tab.world, tab["exclam"])
+class Money
+{
+	public dollar = 0
+	public cent = 0
+	
+	func construct() {}
+	func construct(m)
+	{
+		dollar = math.floor(m)
+		cent = m-dollar
+	}
+	
+	func __add(other)
+	{
+		if (type(other) == "Money")
+		{
+			
+		}
+		else
+		{
+			throw("Cannot add Money and "+type(other))
+		}
+	}
+}

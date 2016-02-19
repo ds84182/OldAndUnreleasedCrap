@@ -1,0 +1,69 @@
+local font = {}
+
+function font.load(data)
+	print("libfont loading "..#data.."b")
+	local fontobj = {}
+	local line = {}
+	for l in data:gmatch("([^\n]+)") do
+		table.insert(line,l)
+	end
+	local w = tonumber(line[1])
+	local h = tonumber(line[2])
+	local at = 3
+	local font = {}
+	while line[at] do
+		local char = line[at]:sub(1,1)
+		at = at+1
+		local f = {}
+		for x=1, w do
+			f[x] = {}
+			for y=1, h do
+				f[x][y] = false
+			end
+		end
+		for y=1, h do
+			local l = line[at]
+			at = at+1
+			for x=1, math.min(w,#l) do
+				f[x][y] = l:sub(x,x) == "1"
+			end
+		end
+		font[char] = f
+	end
+	function fontobj.getSize()
+		return w,h
+	end
+	function fontobj.getFont(char)
+		return font[char]
+	end
+	return fontobj
+end
+
+function font.loadFileHandle(fh)
+	local f = fh.readAll()
+	fh.close()
+	return font.load(f)
+end
+
+function font.loadFile(file)
+	return font.loadFileHandle(fs.open(file,"r"))
+end
+
+function font.draw(gpu,x,y,fo,str,color)
+	local w,h = fo.getSize()
+	color = color or {255,255,255}
+	for i=1, #str do
+		local f = fo.getFont(str:sub(i,i))
+		if f then
+			for cx = 1, #f do
+				for cy = 1, #f[cx] do
+					if f[cx][cy] then
+						gpu.plot(color[1],color[2],color[3],x+((i-1)*w)+cx-1,y+cy-1)
+					end
+				end
+			end
+		end
+	end
+end
+
+return font

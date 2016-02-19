@@ -1,0 +1,141 @@
+local Process = {}
+local newenv = {}
+local term = term
+local pipe = pipe
+
+local function wrap(f,e)
+	return function(...)
+		--print("Wrapper run")
+		local env = getfenv(f)
+		setfenv(f,getfenv(2))
+		local ret = {f(...)}
+		setfenv(f,env or getfenv(0))
+		return unpack(ret)
+	end
+end
+
+local function copy(tab)
+	local r = {}
+	for i, v in pairs(tab) do
+		if type(v) == "table" then
+			if v ~= tab then
+				r[i] = copy(v)
+				if getmetatable(v) then
+					setmetatable(r[i], getmetatable(v))
+				end
+			end
+		elseif type(v) == "function" then
+			r[i] = wrap(v,newenv)
+		else
+			r[i] = v
+		end
+	end
+	return r
+end
+
+local function regcopy(tab)
+	local r = {}
+	for i, v in pairs(tab) do
+		if type(v) == "table" then
+			if v ~= tab then
+				r[i] = regcopy(v)
+			end
+		else
+			r[i] = v
+		end
+	end
+	return r
+end
+
+local function scopy(tab)
+	local r = newenv
+	for i, v in pairs(tab) do
+		if type(v) == "table" then
+			if v ~= tab then
+				r[i] = copy(v)
+				if getmetatable(v) then
+					setmetatable(r[i], getmetatable(v))
+				end
+			end
+		elseif type(v) == "function" then
+			r[i] = wrap(v,newenv)
+		else
+			r[i] = v
+		end
+	end
+	return r
+end
+
+function Process.new(env,tasker,task,pipe,compositor)
+	local term = term
+	self = {}
+	function self.create(func)
+		newenv = {}
+		local nenv = scopy(env)
+		local p = pipe.new(51, 19)
+		local id = compositor.add(p,0,0,0)
+		nenv.term = p.getTermAPI()
+		--nenv.term = nil
+		--local n = regcopy(nenv)
+		nenv._G = {}
+		--n.os = {}
+		setmetatable(nenv,{__index = function(t,v) return rawget(nenv._G,v) end})
+		setmetatable(nenv._G,{__index = function(t,v) return rawget(nenv,v) end})
+		local pca = pcall
+
+		nenv.pcall = function(func)
+			setfenv(func,getfenv(2))
+			return pca(func)
+		end
+		
+		local lstr = loadstring
+		nenv.loadstring = function(str,name)
+			local f, e = lstr(str,name)
+			if f then
+				setfenv(f,getfenv(2))
+			end
+			return f, e
+		end
+
+		function nenv.loadfile( _sFile )
+			local file = fs.open( _sFile, "r" )
+			if file then
+				local func, err = nenv.loadstring( file.readAll(), fs.getName( _sFile ) )
+				file.close()
+				return func, err
+			end
+			return nil, "File not found"
+		end
+
+		function nenv.dofile( _sFile )
+			local fnFile, e = nenv.loadfile( _sFile )
+			if fnFile then
+				setfenv( fnFile, getfenv(2) )
+				return fnFile()
+			else
+				error( e, 3 )
+			end
+		end
+		local tsk = task.new(func, nenv)
+		tsk.onDeath(function()
+			compositor.remove(id)
+		end)
+		tasker.addProcess(tsk)
+		os.queueEvent("procstart")
+		coroutine.yield()
+	end
+	function self.createBackground(func)
+		newenv = {}
+		local nenv = scopy(env)
+		local tsk = task.new(func, nenv)
+		tasker.addProcess(tsk)
+		-- local p = pipe.new(term.getSize())
+		-- compositor.add(p,0,0,0)
+		-- nenv.term = p.getTermAPI()
+		os.queueEvent("procstart")
+		coroutine.yield()
+	end
+	return self
+end
+
+return Process

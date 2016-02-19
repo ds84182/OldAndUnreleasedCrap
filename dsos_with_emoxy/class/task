@@ -1,0 +1,51 @@
+local Task = {}
+local ccreate = coroutine.create
+local cre = coroutine.resume
+local sfe = setfenv
+function Task.new(func, env)
+	local self = {}
+	sfe(func,env)
+	self.coro = ccreate(func)
+	self.env = env
+	self.filter = nil
+	self.alive = true
+	self.error = nil
+	self.pid = -1
+	self.death = function() end
+	function self.getFilter()
+		return self.filter
+	end
+
+	function self.isAlive()
+		return self.alive
+	end
+
+	function self.setPID(pid)
+		self.pid = pid
+	end
+
+	function self.isError()
+		return self.error ~= nil
+	end
+
+	function self.getError()
+		return self.error
+	end
+	
+	function self.onDeath(f)
+		self.death = f
+	end
+
+	function self.update(args)
+		local r = {cre(self.coro,unpack(args))}
+		self.alive = coroutine.status(self.coro) ~= "dead"
+		if not self.alive then
+			self.error = r[2]
+		else
+			self.filter = r[2]
+		end
+	end
+	return self
+end
+
+return Task

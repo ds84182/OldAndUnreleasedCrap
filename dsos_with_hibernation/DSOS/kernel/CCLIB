@@ -1,0 +1,45 @@
+env.term = {
+			setCursorBlink = ret.wrapFunc(term.setCursorBlink),
+			getSize = ret.wrapFunc(term.getSize),
+			getCursorPos = ret.wrapFunc(term.getCursorPos),
+			setCursorPos = ret.wrapFunc(term.setCursorPos),
+			write = ret.wrapFunc(term.write),
+			clear = ret.wrapFunc(term.clear),
+			clearLine = ret.wrapFunc(term.clearLine),
+			scroll = ret.wrapFunc(term.scroll),
+			isColor = ret.wrapFunc(term.isColor),
+			setBackgroundColor = ret.wrapFunc(term.setBackgroundColor),
+			setTextColor = ret.wrapFunc(term.setTextColor),
+			isColour = ret.wrapFunc(term.isColor),
+			setBackgroundColour = ret.wrapFunc(term.setBackgroundColor),
+			setTextColour = ret.wrapFunc(term.setTextColor),
+}
+
+env.file = {}
+for i,v in pairs(file) do
+	env.file[i] = ret.wrapFunc(v)
+end
+env.file.list = ret.wrapListReturningFunc(file.list)
+env.file.recursiveList = ret.wrapListReturningFunc(file.recursiveList)
+--[[env.fs.open = function(path, mode)
+	path = ret.checkType(path, "string")
+	mode = ret.checkType(mode, "string")
+	local native = fs.open(path, mode)
+	if native == nil then return {type="nil"} end
+	
+	local rt = {type="table",val={}}
+	for k,v in pairs(native) do
+		if type(k) == "string" and type(v) == "function" then
+			ret.setInTable(rt, ret.wrapObj(k), {type="function",val=ret.wrapFunc(v)})
+		end
+	end
+	return rt
+end]]
+
+env.os.pullEvent = ret.wrapFunc(os.pullEvent)
+
+env.write = ret.wrapFunc(write)
+
+function env.read(ch)
+	return ret.wrapObj(read(ret.unwrapObj(ch or {type="nil"})))
+end

@@ -1,0 +1,1 @@
+lualoadstring("proc = os.getProcessManager() proc.create(function() while math.random(1,4) ~= 4 do sleep(1) print('Hello from a new process!') end end)")()

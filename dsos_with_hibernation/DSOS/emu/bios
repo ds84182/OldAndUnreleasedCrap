@@ -1,0 +1,18 @@
+function __inext(tbl, key)
+	key = key + 1
+	if tbl[key] ~= nil then
+		return key, tbl[key]
+	else
+		return nil, nil
+	end
+end
+
+function ipairs(tbl)
+	return __inext, tbl, 0
+end
+
+function pairs(tbl)
+	return next, tbl, nil
+end
+
+print("EMUBIOS Loaded")
